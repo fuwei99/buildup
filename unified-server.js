@@ -1079,6 +1079,17 @@ class RequestHandler {
             }
         }
 
+        const modelNameFromBody = req.body.model || "";
+        const isFakeMode = modelNameFromBody.startsWith("fake-");
+
+        if (isFakeMode) {
+            // 直接修改请求体中的模型名称
+            req.body.model = modelNameFromBody.substring(5);
+            this.logger.info(
+                `[Request] 检测到 'fake-' 前缀，模型切换为 '${req.body.model}'，模式设置为 'fake'。`
+            );
+        }
+
         const proxyRequest = this._buildProxyRequest(req, requestId);
         proxyRequest.is_generative = isGenerativeRequest;
         // 根据判断结果，为浏览器脚本准备标志位
@@ -1088,13 +1099,18 @@ class RequestHandler {
         const wantsStreamByPath = req.path.includes(":streamGenerateContent");
         const wantsStream = wantsStreamByHeader || wantsStreamByPath;
 
+        // 如果模型名称包含 fake- 前缀，则强制使用 fake 模式
+        if (isFakeMode) {
+            proxyRequest.streaming_mode = "fake";
+        }
+
         try {
             if (wantsStream) {
                 // --- 客户端想要流式响应 ---
                 this.logger.info(
-                    `[Request] 客户端启用流式传输 (${this.serverSystem.streamingMode})，进入流式处理模式...`
+                    `[Request] 客户端启用流式传输 (${proxyRequest.streaming_mode})，进入流式处理模式...`
                 );
-                if (this.serverSystem.streamingMode === "fake") {
+                if (proxyRequest.streaming_mode === "fake") {
                     await this._handlePseudoStreamResponse(
                         proxyRequest,
                         messageQueue,
@@ -1148,7 +1164,17 @@ class RequestHandler {
         }
 
         const isOpenAIStream = req.body.stream === true;
-        const model = req.body.model || "gemini-1.5-pro-latest";
+        let model = req.body.model || "gemini-1.5-pro-latest";
+        const isFakeMode = model.startsWith("fake-");
+        let streamingModeForBrowser = isOpenAIStream ? "real" : "fake";
+
+        if (isFakeMode) {
+            model = model.substring(5);
+            streamingModeForBrowser = "fake";
+            this.logger.info(
+                `[Adapter] 检测到 'fake-' 前缀，模型切换为 '${model}'，模式设置为 'fake'。`
+            );
+        }
 
         // 1. 解析模型名称和后缀，确定 Thinking 策略
         let realModel = model;
@@ -1176,7 +1202,11 @@ class RequestHandler {
         let googleBody;
         try {
             // 将计算出的 thinkingConfig 传递给翻译函数
-            googleBody = this._translateOpenAIToGoogle(req.body, realModel, thinkingConfig);
+            googleBody = this._translateOpenAIToGoogle(
+                req.body,
+                realModel,
+                thinkingConfig
+            );
         } catch (error) {
             this.logger.error(`[Adapter] OpenAI请求翻译失败: ${error.message}`);
             return this._sendErrorResponse(
@@ -1187,20 +1217,21 @@ class RequestHandler {
         }
 
         // 3. 构建代理请求
-        const googleEndpoint = isOpenAIStream
-            ? "streamGenerateContent"
-            : "generateContent";
+        const googleEndpoint =
+            isOpenAIStream && !isFakeMode
+                ? "streamGenerateContent"
+                : "generateContent";
         const proxyRequest = {
             path: `/v1beta/models/${realModel}:${googleEndpoint}`,
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            query_params: isOpenAIStream ? { alt: "sse" } : {},
+            query_params: isOpenAIStream && !isFakeMode ? { alt: "sse" } : {},
             body: JSON.stringify(googleBody),
             request_id: requestId,
             // [关键修改] 明确标记这是一个生成式请求，以便切换逻辑可以正确重置失败计数
             is_generative: true,
-            streaming_mode: "real",
-            client_wants_stream: true,
+            streaming_mode: streamingModeForBrowser,
+            client_wants_stream: isOpenAIStream,
         };
 
         const messageQueue = this.connectionRegistry.createMessageQueue(requestId);
@@ -1259,41 +1290,75 @@ class RequestHandler {
                     Connection: "keep-alive",
                 });
 
-                // initialMessage 是 headers，在OpenAI适配器中我们不需要它，所以直接开始循环处理后续的 chunk
-                let lastGoogleChunk = "";
-                while (true) {
-                    const message = await messageQueue.dequeue(300000); // 5分钟超时
-                    if (message.type === "STREAM_END") {
-                        res.write("data: [DONE]\n\n");
-                        break;
-                    }
-                    if (message.data) {
-                        const translatedChunk = this._translateGoogleToOpenAIStream(
-                            message.data,
-                            model
-                        );
-                        if (translatedChunk) {
-                            res.write(translatedChunk);
+                // 如果是伪流模式，则一次性读取，然后模拟流式返回
+                if (isFakeMode) {
+                    this.logger.info("[Adapter] 进入OpenAI伪流式响应处理...");
+                    let fullBody = "";
+                    while (true) {
+                        const message = await messageQueue.dequeue(300000);
+                        if (message.type === "STREAM_END") break;
+                        if (message.event_type === "chunk" && message.data) {
+                            fullBody += message.data;
                         }
-                        lastGoogleChunk = message.data; // [修正] 总是记录最后一个数据块
                     }
-                }
 
-                // 记录结束原因
-                try {
-                    if (lastGoogleChunk.startsWith("data: ")) {
-                        const jsonString = lastGoogleChunk.substring(6).trim();
-                        if (jsonString) {
-                            const lastResponse = JSON.parse(jsonString);
-                            const finishReason =
-                                lastResponse.candidates?.[0]?.finishReason || "UNKNOWN";
-                            this.logger.info(
-                                `✅ [Request] OpenAI流式响应结束，原因: ${finishReason}，请求ID: ${requestId}`
+                    // 将完整的Google响应体转换为单个OpenAI流块
+                    // 我们需要给它加上 "data: " 前缀，因为翻译函数期望的是原始SSE块
+                    const translatedChunk = this._translateGoogleToOpenAIStream(
+                        `data: ${fullBody}`,
+                        model
+                    );
+
+                    if (translatedChunk) {
+                        res.write(translatedChunk);
+                    }
+                    res.write("data: [DONE]\n\n");
+
+                    try {
+                        const fullResponse = JSON.parse(fullBody);
+                        const finishReason =
+                            fullResponse.candidates?.[0]?.finishReason || "UNKNOWN";
+                        this.logger.info(
+                            `✅ [Request] OpenAI伪流式响应结束，原因: ${finishReason}，请求ID: ${requestId}`
+                        );
+                    } catch (e) { }
+                } else {
+                    // --- 处理真流式响应 ---
+                    this.logger.info("[Adapter] 进入OpenAI真流式响应处理...");
+                    let lastGoogleChunk = "";
+                    while (true) {
+                        const message = await messageQueue.dequeue(300000); // 5分钟超时
+                        if (message.type === "STREAM_END") {
+                            res.write("data: [DONE]\n\n");
+                            break;
+                        }
+                        if (message.data) {
+                            const translatedChunk = this._translateGoogleToOpenAIStream(
+                                message.data,
+                                model
                             );
+                            if (translatedChunk) {
+                                res.write(translatedChunk);
+                            }
+                            lastGoogleChunk = message.data;
                         }
                     }
-                } catch (e) {
-                    // 解析失败则不记录
+                    // 记录结束原因
+                    try {
+                        if (lastGoogleChunk.startsWith("data: ")) {
+                            const jsonString = lastGoogleChunk.substring(6).trim();
+                            if (jsonString) {
+                                const lastResponse = JSON.parse(jsonString);
+                                const finishReason =
+                                    lastResponse.candidates?.[0]?.finishReason || "UNKNOWN";
+                                this.logger.info(
+                                    `✅ [Request] OpenAI真流式响应结束，原因: ${finishReason}，请求ID: ${requestId}`
+                                );
+                            }
+                        }
+                    } catch (e) {
+                        // 解析失败则不记录
+                    }
                 }
             } else {
                 // --- 处理非流式响应 ---
@@ -2730,14 +2795,26 @@ class ProxyServerSystem extends EventEmitter {
         app.use(this._createAuthMiddleware());
 
         app.get("/v1/models", (req, res) => {
-            const modelIds = this.config.modelList || ["gemini-2.5-pro"];
+            const modelIds = this.config.modelList || ["gemini-1.5-pro-latest"];
 
-            const models = modelIds.map((id) => ({
-                id: id,
-                object: "model",
-                created: Math.floor(Date.now() / 1000),
-                owned_by: "google",
-            }));
+            const models = modelIds.reduce((acc, id) => {
+                const created = Math.floor(Date.now() / 1000);
+                // Add original model
+                acc.push({
+                    id: id,
+                    object: "model",
+                    created: created,
+                    owned_by: "google",
+                });
+                // Add fake model
+                acc.push({
+                    id: `fake-${id}`,
+                    object: "model",
+                    created: created,
+                    owned_by: "google",
+                });
+                return acc;
+            }, []);
 
             res.status(200).json({
                 object: "list",
