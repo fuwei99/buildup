@@ -1,0 +1,60 @@
+
+name: Docker Image CI
+
+# 触发工作流的事件
+on:
+  push:
+    branches: [ "main" ] # 当 main 分支有推送时触发
+  pull_request:
+    branches: [ "main" ] # 当有针对 main 分支的拉取请求时触发
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest # 使用最新的 Ubuntu 运行器
+    permissions:
+      contents: read      # 授予读取仓库内容的权限
+      packages: write     # 必须授予写入 packages (GHCR) 的权限，否则无法推送镜像
+
+    steps:
+      # 第一步：检出你的仓库代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      # 第二步：下载并解压所需文件
+      - name: Download and extract camoufox
+        run: |
+          # 下载 camoufox
+          wget https://github.com/daijro/camoufox/releases/download/v135.0.1-beta.24/camoufox-135.0.1-beta.24-lin.x86_64.zip
+          # 解压并重命名为 camoufox-linux
+          unzip camoufox-135.0.1-beta.24-lin.x86_64.zip -d camoufox-linux
+          
+      # 第三步：登录到 GitHub Container Registry (GHCR)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}          # 使用触发工作流的用户名
+          password: ${{ secrets.GITHUB_TOKEN }}  # 使用 GitHub 自动提供的 GITHUB_TOKEN 进行认证
+
+      # 第四步：构建并推送 Docker 镜像 (已按你的要求修改)
+      - name: Build and push Docker image
+        run: |
+          # --- 修改部分开始 ---
+          # 1. 设置镜像名称和标签
+          #    使用 github.repository 变量动态获取仓库名 (owner/repo)，并转为小写
+          IMAGE_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          #    设置你指定的标签
+          IMAGE_TAG="fangnimadepi"
+          
+          # 2. 构造完整的镜像路径
+          FULL_IMAGE_NAME="ghcr.io/$IMAGE_NAME:$IMAGE_TAG"
+          
+          # 3. 打印出完整镜像名，方便在 Actions 日志中查看和调试
+          echo "Building and pushing image: $FULL_IMAGE_NAME"
+          
+          # 4. 构建镜像
+          docker build . --file Dockerfile --tag "$FULL_IMAGE_NAME"
+          
+          # 5. 推送镜像
+          docker push "$FULL_IMAGE_NAME"
+          # --- 修改部分结束 ---
