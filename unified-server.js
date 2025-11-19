@@ -37,10 +37,10 @@ class AuthSource {
     this._preValidateAndFilter(); // 预检验并过滤掉格式错误的源
 
     if (this.availableIndices.length === 0) {
-      this.logger.warn(
-        `[Auth] ⚠️ 在 '${this.authMode}' 模式下未找到任何有效的认证源。服务器将以无 Auth 模式启动，请稍后通过 Web 界面添加。`
+      this.logger.error(
+        `[Auth] 致命错误：在 '${this.authMode}' 模式下未找到任何有效的认证源。`
       );
-      // throw new Error("No valid authentication sources found."); // [修改] 不再抛出错误
+      throw new Error("No valid authentication sources found.");
     }
   }
 
@@ -2018,27 +2018,21 @@ class ProxyServerSystem extends EventEmitter {
   }
 
   async start(initialAuthIndex = null) {
+    // <<<--- 1. 重新接收参数
     this.logger.info("[System] 开始弹性启动流程...");
-
-    // 1. [修改] 无论是否有 Auth，先启动 HTTP 和 WebSocket 服务，确保 Web 界面可用
-    await this._startHttpServer();
-    await this._startWebSocketServer();
-    this.logger.info(`[System] 网络服务已启动，Web 界面可访问。`);
-
     const allAvailableIndices = this.authSource.availableIndices;
 
     if (allAvailableIndices.length === 0) {
-      this.logger.warn("⚠️ [System] 没有任何可用的认证源。浏览器启动已跳过。请访问 Web 界面添加账号。");
-      this.emit("started"); // 仍然发出 started 事件，表示服务器本身已就绪
-      return;
+      throw new Error("没有任何可用的认证源，无法启动。");
     }
 
-    // 2. 创建优先尝试的启动顺序列表
+    // 2. <<<--- 创建一个优先尝试的启动顺序列表 --->>>
     let startupOrder = [...allAvailableIndices];
     if (initialAuthIndex && allAvailableIndices.includes(initialAuthIndex)) {
       this.logger.info(
         `[System] 检测到指定启动索引 #${initialAuthIndex}，将优先尝试。`
       );
+      // 将指定索引放到数组第一位，其他索引保持原状
       startupOrder = [
         initialAuthIndex,
         ...allAvailableIndices.filter((i) => i !== initialAuthIndex),
@@ -2057,7 +2051,7 @@ class ProxyServerSystem extends EventEmitter {
     }
 
     let isStarted = false;
-    // 3. 遍历尝试启动浏览器
+    // 3. <<<--- 遍历这个新的、可能被重排过的顺序列表 --->>>
     for (const index of startupOrder) {
       try {
         this.logger.info(`[System] 尝试使用账号 #${index} 启动服务...`);
@@ -2075,11 +2069,14 @@ class ProxyServerSystem extends EventEmitter {
     }
 
     if (!isStarted) {
-      // [修改] 如果所有账号都失败，不抛出致命错误，而是保持服务器运行
-      this.logger.error("❌ [System] 所有认证源均尝试失败。浏览器未启动，但服务器将保持运行以便通过 Web 界面修复。");
+      // 如果所有账号都尝试失败了
+      throw new Error("所有认证源均尝试失败，服务器无法启动。");
     }
 
-    this.logger.info(`[System] 代理服务器系统启动流程结束。`);
+    // 只有在浏览器成功启动后，才启动网络服务
+    await this._startHttpServer();
+    await this._startWebSocketServer();
+    this.logger.info(`[System] 代理服务器系统启动完成。`);
     this.emit("started");
   }
 
@@ -2232,24 +2229,6 @@ class ProxyServerSystem extends EventEmitter {
       } else {
         res.redirect("/login?error=1");
       }
-    });
-
-    // ==========================================================
-    // Section 3: 静态资源服务 & API
-    // ==========================================================
-
-    // 1. 托管 web 目录下的静态文件
-    app.use(express.static(path.join(__dirname, 'web')));
-
-    // 2. 根路径重定向到 index.html (如果请求不是API)
-    app.get("/", isAuthenticated, (req, res) => {
-      res.sendFile(path.join(__dirname, 'web', 'index.html'));
-    });
-
-    // --- API 路由 ---
-    app.get("/api/status", isAuthenticated, (req, res) => {
-      const { config, requestHandler, authSource, browserManager } = this;
-      const initialIndices = authSource.initialIndices || [];
       const invalidIndices = initialIndices.filter(
         (i) => !authSource.availableIndices.includes(i)
       );
@@ -2273,13 +2252,15 @@ class ProxyServerSystem extends EventEmitter {
               : "已禁用",
           apiKeySource: config.apiKeySource,
           currentAuthIndex: requestHandler.currentAuthIndex,
-          usageCount: requestHandler.usageCount,
-          switchOnUses: config.switchOnUses,
-          failureCount: requestHandler.failureCount,
-          failureThreshold: config.failureThreshold,
-          initialIndices: `[${initialIndices.join(", ")}] (总数: ${initialIndices.length})`,
+          usageCount: `${requestHandler.usageCount} / ${config.switchOnUses > 0 ? config.switchOnUses : "N/A"
+            }`,
+          failureCount: `${requestHandler.failureCount} / ${config.failureThreshold > 0 ? config.failureThreshold : "N/A"
+            }`,
+          initialIndices: `[${initialIndices.join(", ")}] (总数: ${initialIndices.length
+            })`,
           accountDetails: accountDetails,
-          invalidIndices: `[${invalidIndices.join(", ")}] (总数: ${invalidIndices.length})`,
+          invalidIndices: `[${invalidIndices.join(", ")}] (总数: ${invalidIndices.length
+            })`,
         },
         logs: logs.join("\n"),
         logCount: logs.length,
@@ -2289,28 +2270,6 @@ class ProxyServerSystem extends EventEmitter {
     app.post("/api/switch-account", isAuthenticated, async (req, res) => {
       try {
         const { targetIndex } = req.body;
-
-        // [新增] 如果浏览器尚未启动（例如无Auth启动的情况），尝试初始化
-        if (!this.browserManager.browser) {
-          this.logger.info("[WebUI] 浏览器未运行，尝试启动...");
-          try {
-            // 重新扫描 Auth
-            this.authSource._discoverAvailableIndices();
-            this.authSource._preValidateAndFilter();
-
-            const indexToLaunch = targetIndex !== undefined ? targetIndex : this.authSource.availableIndices[0];
-
-            if (!indexToLaunch) {
-              return res.status(400).send("无法启动：仍未找到有效的 Auth 账号。");
-            }
-
-            await this.browserManager.launchOrSwitchContext(indexToLaunch);
-            return res.status(200).send(`浏览器已成功启动！当前账号 #${indexToLaunch}。`);
-          } catch (e) {
-            return res.status(500).send(`启动浏览器失败: ${e.message}`);
-          }
-        }
-
         if (targetIndex !== undefined && targetIndex !== null) {
           this.logger.info(
             `[WebUI] 收到切换到指定账号 #${targetIndex} 的请求...`
