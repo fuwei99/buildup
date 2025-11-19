@@ -1,108 +1,46 @@
-let apiKey = null;
+let currentAuthId = null;
 
-// ==================================================================
-// Login and Initialization
-// ==================================================================
-
-async function login() {
-    const keyInput = document.getElementById('api-key-input');
-    const errorEl = document.getElementById('login-error');
-    const key = keyInput.value.trim();
-
-    if (!key) {
-        errorEl.textContent = 'API Key cannot be empty.';
-        return;
-    }
-
-    // Try to fetch status with the new key to validate it
-    try {
-        const res = await fetchWithAuth('/api/status', { headers: { 'x-api-key': key } });
-        if (!res.ok) {
-            throw new Error('Invalid API Key');
-        }
-        
-        // Key is valid, proceed
-        apiKey = key;
-        errorEl.textContent = '';
-        document.getElementById('login-view').style.display = 'none';
-        document.getElementById('app-view').style.display = 'block';
-        
-        // Initial load
-        const data = await res.json();
-        updateDashboard(data);
-        updateLogs(data.logs);
-        renderAuthList(data.status.accountDetails);
-        
-        // Start periodic refresh
-        setInterval(refreshStatus, 5000);
-
-    } catch (err) {
-        console.error('Login failed:', err);
-        errorEl.textContent = 'Login failed. Please check your API Key.';
-        apiKey = null;
-    }
-}
-
-// ==================================================================
-// Core Functions (using fetchWithAuth)
-// ==================================================================
-
-async function fetchWithAuth(url, options = {}) {
-    const headers = { ...options.headers };
-    if (apiKey) {
-        headers['x-api-key'] = apiKey;
-    }
-    
-    const res = await fetch(url, { ...options, headers });
-
-    if (res.status === 401) {
-        // If we get a 401, it means the key is invalid or expired.
-        // Force a re-login.
-        apiKey = null;
-        document.getElementById('app-view').style.display = 'none';
-        document.getElementById('login-view').style.display = 'block';
-        document.getElementById('login-error').textContent = 'Session expired. Please log in again.';
-        throw new Error('Unauthorized');
-    }
-    
-    return res;
-}
-
+document.addEventListener('DOMContentLoaded', () => {
+    refreshStatus();
+    setInterval(refreshStatus, 5000);
+});
 
 async function refreshStatus() {
     try {
-        const res = await fetchWithAuth('/api/status');
-        if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-        
+        const res = await fetch('/api/status');
+        if (res.redirected) {
+            window.location.href = '/login';
+            return;
+        }
+        if (!res.ok) {
+            throw new Error(`Server responded with status: ${res.status}`);
+        }
         const data = await res.json();
         updateDashboard(data);
         updateLogs(data.logs);
         renderAuthList(data.status.accountDetails);
 
+        // Update connection status
         const statusBadge = document.getElementById('server-status');
         statusBadge.className = 'status-badge online';
         statusBadge.querySelector('.text').textContent = 'Online';
     } catch (err) {
-        if (err.message !== 'Unauthorized') {
-            console.error('Failed to fetch status:', err);
-            const statusBadge = document.getElementById('server-status');
-            statusBadge.className = 'status-badge offline';
-            statusBadge.querySelector('.text').textContent = 'Offline';
-        }
+        console.error('Failed to fetch status:', err);
+        const statusBadge = document.getElementById('server-status');
+        statusBadge.className = 'status-badge offline';
+        statusBadge.querySelector('.text').textContent = 'Offline';
+        renderAuthList([]);
     }
 }
-
-// ==================================================================
-// UI Update Functions
-// ==================================================================
 
 function updateDashboard(data) {
     document.getElementById('current-account').textContent = `#${data.status.currentAuthIndex}`;
     document.getElementById('usage-count').textContent = `${data.status.usageCount} / ${data.status.switchOnUses || '∞'}`;
     document.getElementById('failure-count').textContent = `${data.status.failureCount} / ${data.status.failureThreshold || '∞'}`;
     document.getElementById('browser-status').textContent = data.status.browserConnected ? 'Connected' : 'Disconnected';
-    document.getElementById('current-mode').textContent = data.status.streamingMode.includes('real') ? 'Real Stream' : 'Fake Stream';
+    document.getElementById('current-mode').textContent = data.status.streamingMode === 'real' ? 'Real Stream' : 'Fake Stream';
 
+    // Update account select
     const select = document.getElementById('account-select');
     const currentVal = select.value;
     select.innerHTML = '';
@@ -125,7 +63,9 @@ function updateDashboard(data) {
 function updateLogs(logs) {
     const container = document.getElementById('logs-container');
     const wasScrolledToBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 10;
+
     container.textContent = logs;
+
     if (wasScrolledToBottom) {
         container.scrollTop = container.scrollHeight;
     }
@@ -157,10 +97,6 @@ function renderAuthList(auths) {
     });
 }
 
-// ==================================================================
-// User Actions
-// ==================================================================
-
 async function switchAccount() {
     const index = document.getElementById('account-select').value;
     if (!index) return;
@@ -168,7 +104,7 @@ async function switchAccount() {
     if (!confirm(`Switch to Account #${index}? This will restart the browser session.`)) return;
 
     try {
-        const res = await fetchWithAuth('/api/switch-account', {
+        const res = await fetch('/api/switch-account', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ targetIndex: parseInt(index) })
@@ -177,7 +113,7 @@ async function switchAccount() {
         alert(msg);
         refreshStatus();
     } catch (err) {
-        if (err.message !== 'Unauthorized') alert('Failed to switch account: ' + err.message);
+        alert('Failed to switch account: ' + err.message);
     }
 }
 
@@ -186,7 +122,7 @@ async function toggleMode() {
     const newMode = currentText.includes('Real') ? 'fake' : 'real';
 
     try {
-        const res = await fetchWithAuth('/api/set-mode', {
+        const res = await fetch('/api/set-mode', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mode: newMode })
@@ -195,7 +131,7 @@ async function toggleMode() {
         alert(msg);
         refreshStatus();
     } catch (err) {
-        if (err.message !== 'Unauthorized') alert('Failed to toggle mode: ' + err.message);
+        alert('Failed to toggle mode: ' + err.message);
     }
 }
 
@@ -203,12 +139,7 @@ function clearLogs() {
     document.getElementById('logs-container').textContent = '';
 }
 
-// ==================================================================
-// Auth Management Modal
-// ==================================================================
-
-let currentAuthId = null;
-
+// Auth Management
 function openAddAuthModal() {
     currentAuthId = null;
     document.getElementById('modal-title').textContent = 'Add New Auth';
@@ -224,7 +155,7 @@ function closeAuthModal() {
 
 async function editAuth(index) {
     try {
-        const res = await fetchWithAuth(`/api/auth/${index}`);
+        const res = await fetch(`/api/auth/${index}`);
         const data = await res.json();
 
         currentAuthId = index;
@@ -234,7 +165,7 @@ async function editAuth(index) {
         document.getElementById('auth-content').value = JSON.stringify(data, null, 2);
         document.getElementById('auth-modal').classList.add('active');
     } catch (err) {
-        if (err.message !== 'Unauthorized') alert('Failed to load auth data: ' + err.message);
+        alert('Failed to load auth data: ' + err.message);
     }
 }
 
@@ -248,9 +179,10 @@ async function saveAuth() {
     }
 
     try {
-        JSON.parse(content); // Validate JSON
+        // Validate JSON
+        JSON.parse(content);
 
-        const res = await fetchWithAuth('/api/auth/save', {
+        const res = await fetch('/api/auth/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -263,9 +195,10 @@ async function saveAuth() {
 
         alert('Auth saved successfully!');
         closeAuthModal();
-        refreshStatus();
+        loadAuthList();
+        refreshStatus(); // Refresh to update account list
     } catch (err) {
-        if (err.message !== 'Unauthorized') alert('Error saving auth: ' + err.message);
+        alert('Error saving auth: ' + err.message);
     }
 }
 
@@ -273,15 +206,16 @@ async function deleteAuth(index) {
     if (!confirm(`Are you sure you want to delete Auth #${index}? This cannot be undone.`)) return;
 
     try {
-        const res = await fetchWithAuth(`/api/auth/${index}`, {
+        const res = await fetch(`/api/auth/${index}`, {
             method: 'DELETE'
         });
 
         if (!res.ok) throw new Error(await res.text());
 
         alert('Auth deleted successfully');
+        loadAuthList();
         refreshStatus();
     } catch (err) {
-        if (err.message !== 'Unauthorized') alert('Error deleting auth: ' + err.message);
+        alert('Error deleting auth: ' + err.message);
     }
 }

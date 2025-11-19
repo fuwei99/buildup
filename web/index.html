@@ -8,169 +8,117 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        .login-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background-color: #f0f2f5;
-        }
-        .login-box {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            text-align: center;
-            width: 360px;
-        }
-        .login-box h1 {
-            margin-bottom: 10px;
-        }
-        .login-box p {
-            margin-bottom: 20px;
-            color: #666;
-        }
-        .login-box input {
-            width: 100%;
-            padding: 12px;
-            margin-bottom: 20px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            box-sizing: border-box;
-        }
-        .login-box button {
-            width: 100%;
-        }
-        .error-message {
-            color: #d93025;
-            margin-top: 15px;
-            min-height: 20px;
-        }
-    </style>
 </head>
 <body>
-    <div id="login-view" class="login-container">
-        <div class="login-box">
-            <h1>Server Login</h1>
-            <p>Please enter your API Key to continue.</p>
-            <input type="password" id="api-key-input" placeholder="API Key" autofocus>
-            <button class="btn btn-primary" onclick="login()">Login</button>
-            <p id="login-error" class="error-message"></p>
-        </div>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="logo">
+                <span class="icon">⚡</span>
+                <h1>Gemini Unified Server</h1>
+            </div>
+            <div class="status-badge" id="server-status">
+                <span class="dot"></span>
+                <span class="text">Connecting...</span>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Dashboard Section -->
+            <section class="card dashboard-card">
+                <div class="card-header">
+                    <h2>System Status</h2>
+                    <div class="actions">
+                        <button class="btn btn-secondary btn-sm" onclick="refreshStatus()">Refresh</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <label>Current Account</label>
+                            <div class="value" id="current-account"># -</div>
+                        </div>
+                        <div class="stat-item">
+                            <label>Usage Count</label>
+                            <div class="value" id="usage-count">- / -</div>
+                        </div>
+                        <div class="stat-item">
+                            <label>Failure Count</label>
+                            <div class="value" id="failure-count">- / -</div>
+                        </div>
+                        <div class="stat-item">
+                            <label>Browser</label>
+                            <div class="value" id="browser-status">Unknown</div>
+                        </div>
+                    </div>
+                    
+                    <div class="control-panel">
+                        <div class="control-group">
+                            <label>Switch Account</label>
+                            <div class="input-group">
+                                <select id="account-select"></select>
+                                <button class="btn btn-primary" onclick="switchAccount()">Switch</button>
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <label>Streaming Mode</label>
+                            <div class="toggle-group">
+                                <span id="current-mode">Real</span>
+                                <button class="btn btn-outline" onclick="toggleMode()">Toggle</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Logs Section -->
+            <section class="card logs-card">
+                <div class="card-header">
+                    <h2>Live Logs</h2>
+                    <button class="btn btn-icon" onclick="clearLogs()" title="Clear Logs">🗑️</button>
+                </div>
+                <div class="card-body">
+                    <div class="logs-container" id="logs-container">
+                        <!-- Logs will be injected here -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Auth Management Section -->
+            <section class="card auth-card">
+                <div class="card-header">
+                    <h2>Auth Management</h2>
+                    <button class="btn btn-primary" onclick="openAddAuthModal()">+ Add New Auth</button>
+                </div>
+                <div class="card-body">
+                    <div class="auth-list" id="auth-list">
+                        <!-- Auth items will be injected here -->
+                    </div>
+                </div>
+            </section>
+        </main>
     </div>
 
-    <div id="app-view" style="display: none;">
-        <div class="app-container">
-            <header class="app-header">
-                <div class="logo">
-                    <span class="icon">⚡</span>
-                    <h1>Gemini Unified Server</h1>
+    <!-- Modal for Adding/Editing Auth -->
+    <div class="modal-overlay" id="auth-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">Add New Auth</h3>
+                <button class="close-btn" onclick="closeAuthModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="auth-index">Index (File ID)</label>
+                    <input type="number" id="auth-index" placeholder="e.g. 1, 2, 3..." min="1">
+                    <small>Will save as auth-{index}.json</small>
                 </div>
-                <div class="status-badge" id="server-status">
-                    <span class="dot"></span>
-                    <span class="text">Connecting...</span>
+                <div class="form-group">
+                    <label for="auth-content">JSON Content</label>
+                    <textarea id="auth-content" rows="10" placeholder='Paste your auth JSON here...'></textarea>
                 </div>
-            </header>
-
-            <main class="main-content">
-                <!-- Dashboard Section -->
-                <section class="card dashboard-card">
-                    <div class="card-header">
-                        <h2>System Status</h2>
-                        <div class="actions">
-                            <button class="btn btn-secondary btn-sm" onclick="refreshStatus()">Refresh</button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="stats-grid">
-                            <div class="stat-item">
-                                <label>Current Account</label>
-                                <div class="value" id="current-account"># -</div>
-                            </div>
-                            <div class="stat-item">
-                                <label>Usage Count</label>
-                                <div class="value" id="usage-count">- / -</div>
-                            </div>
-                            <div class="stat-item">
-                                <label>Failure Count</label>
-                                <div class="value" id="failure-count">- / -</div>
-                            </div>
-                            <div class="stat-item">
-                                <label>Browser</label>
-                                <div class="value" id="browser-status">Unknown</div>
-                            </div>
-                        </div>
-                        
-                        <div class="control-panel">
-                            <div class="control-group">
-                                <label>Switch Account</label>
-                                <div class="input-group">
-                                    <select id="account-select"></select>
-                                    <button class="btn btn-primary" onclick="switchAccount()">Switch</button>
-                                </div>
-                            </div>
-                            <div class="control-group">
-                                <label>Streaming Mode</label>
-                                <div class="toggle-group">
-                                    <span id="current-mode">Real</span>
-                                    <button class="btn btn-outline" onclick="toggleMode()">Toggle</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Logs Section -->
-                <section class="card logs-card">
-                    <div class="card-header">
-                        <h2>Live Logs</h2>
-                        <button class="btn btn-icon" onclick="clearLogs()" title="Clear Logs">🗑️</button>
-                    </div>
-                    <div class="card-body">
-                        <div class="logs-container" id="logs-container">
-                            <!-- Logs will be injected here -->
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Auth Management Section -->
-                <section class="card auth-card">
-                    <div class="card-header">
-                        <h2>Auth Management</h2>
-                        <button class="btn btn-primary" onclick="openAddAuthModal()">+ Add New Auth</button>
-                    </div>
-                    <div class="card-body">
-                        <div class="auth-list" id="auth-list">
-                            <!-- Auth items will be injected here -->
-                        </div>
-                    </div>
-                </section>
-            </main>
-        </div>
-
-        <!-- Modal for Adding/Editing Auth -->
-        <div class="modal-overlay" id="auth-modal">
-            <div class="modal">
-                <div class="modal-header">
-                    <h3 id="modal-title">Add New Auth</h3>
-                    <button class="close-btn" onclick="closeAuthModal()">×</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label for="auth-index">Index (File ID)</label>
-                        <input type="number" id="auth-index" placeholder="e.g. 1, 2, 3..." min="1">
-                        <small>Will save as auth-{index}.json</small>
-                    </div>
-                    <div class="form-group">
-                        <label for="auth-content">JSON Content</label>
-                        <textarea id="auth-content" rows="10" placeholder='Paste your auth JSON here...'></textarea>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="closeAuthModal()">Cancel</button>
-                    <button class="btn btn-primary" onclick="saveAuth()">Save</button>
-                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeAuthModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveAuth()">Save</button>
             </div>
         </div>
     </div>
