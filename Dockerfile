@@ -33,11 +33,8 @@ COPY package*.json ./
 RUN npm install
 
 # 复制应用文件
-COPY unified-server.js black-browser.js ./
-COPY config.json models.json ./
-COPY web/ ./web/
-RUN mkdir -p auth/
-# COPY auth/ ./auth/
+COPY unified-server.js dark-browser.js ./
+COPY auth/ ./auth/
 COPY camoufox-linux/ ./camoufox-linux/
 
 # 设置文件权限和camoufox可执行权限
@@ -48,7 +45,7 @@ RUN chown -R user:user /home/user && \
 USER user
 
 # 暴露端口
-EXPOSE 7860
+EXPOSE 8889
 
 # 启动命令
 CMD ["node", "unified-server.js"]
