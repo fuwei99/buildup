@@ -36,7 +36,8 @@ RUN npm install
 COPY unified-server.js black-browser.js ./
 COPY config.json models.json ./
 COPY web/ ./web/
-COPY auth/ ./auth/
+RUN mkdir -p auth/
+# COPY auth/ ./auth/
 COPY camoufox-linux/ ./camoufox-linux/
 
 # 设置文件权限和camoufox可执行权限
