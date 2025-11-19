@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  buildup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 如果需要多架构支持，可以添加：
+      # platforms:
+      #   - linux/amd64
+      #   - linux/arm64
+
+    container_name: buildup-proxy-local
+    restart: unless-stopped
+
+    # 端口映射
+    ports:
+      - "${PORT:-7860}:7860"
+
+    # 环境变量配置
+    environment:
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=${PORT:-7860}
+      - STREAMING_MODE=${STREAMING_MODE:-real}
+      - FAILURE_THRESHOLD=${FAILURE_THRESHOLD:-0}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - RETRY_DELAY=${RETRY_DELAY:-3000}
+      - API_KEYS=${API_KEYS:-}
+      - INITIAL_AUTH_INDEX=${INITIAL_AUTH_INDEX:-}
+      - IMMEDIATE_SWITCH_STATUS_CODES=${IMMEDIATE_SWITCH_STATUS_CODES:-429,503}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+
+      # 认证配置 (可选，支持多个认证源)
+      # - AUTH_JSON_1={"username":"user1","password":"pass1"}
+      # - AUTH_JSON_2={"username":"user2","password":"pass2"}
+
+    # 数据卷挂载
+    volumes:
+      # 挂载源代码目录 (用于开发时热重载，生产环境可选)
+      - ./unified-server.js:/home/user/unified-server.js
+      - ./black-browser.js:/home/user/black-browser.js
+      - ./config.json:/home/user/config.json
+      - ./models.json:/home/user/models.json
+      # 挂载认证文件目录
+      - ./auth:/home/user/auth:ro
+      # 挂载web静态文件
+      - ./web:/home/user/web:ro
+      # 挂载camoufox浏览器
+      - ./camoufox-linux:/home/user/camoufox-linux:ro
+      # 持久化数据目录 (日志、临时文件等)
+      - ./data:/home/user/data
+      # Node模块缓存 (可选，提高构建速度)
+      - node_modules_cache:/home/user/node_modules
+
+    # 工作目录
+    working_dir: /home/user
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-2g}
+          cpus: ${CPU_LIMIT:-1.0}
+        reservations:
+          memory: ${MEMORY_RESERVATION:-512m}
+          cpus: ${CPU_RESERVATION:-0.5}
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:7860/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # 网络配置
+    networks:
+      - buildup-local-network
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # 安全配置
+    security_opt:
+      - no-new-privileges:true
+    # 如果需要浏览器功能，可能需要额外的权限
+    # cap_add:
+    #   - SYS_ADMIN
+    # devices:
+    #   - /dev/dri:/dev/dri
+
+    # 用户配置 (Dockerfile中已设置为user用户)
+    user: "1000:1000"
+
+networks:
+  buildup-local-network:
+    driver: bridge
+
+volumes:
+  node_modules_cache:
+    driver: local

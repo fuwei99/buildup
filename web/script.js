@@ -2,20 +2,23 @@ let currentAuthId = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     refreshStatus();
-    loadAuthList();
     setInterval(refreshStatus, 5000);
 });
 
 async function refreshStatus() {
     try {
         const res = await fetch('/api/status');
-        if (res.status === 401) {
+        if (res.redirected) {
             window.location.href = '/login';
             return;
+        }
+        if (!res.ok) {
+            throw new Error(`Server responded with status: ${res.status}`);
         }
         const data = await res.json();
         updateDashboard(data);
         updateLogs(data.logs);
+        renderAuthList(data.status.accountDetails);
 
         // Update connection status
         const statusBadge = document.getElementById('server-status');
@@ -26,6 +29,7 @@ async function refreshStatus() {
         const statusBadge = document.getElementById('server-status');
         statusBadge.className = 'status-badge offline';
         statusBadge.querySelector('.text').textContent = 'Offline';
+        renderAuthList([]);
     }
 }
 
@@ -67,21 +71,11 @@ function updateLogs(logs) {
     }
 }
 
-async function loadAuthList() {
-    try {
-        const res = await fetch('/api/auth/list');
-        const auths = await res.json();
-        renderAuthList(auths);
-    } catch (err) {
-        console.error('Failed to load auth list:', err);
-    }
-}
-
 function renderAuthList(auths) {
     const list = document.getElementById('auth-list');
     list.innerHTML = '';
 
-    if (auths.length === 0) {
+    if (!auths || auths.length === 0) {
         list.innerHTML = '<div class="empty-state">No auth files found. Add one to get started.</div>';
         return;
     }
@@ -92,8 +86,7 @@ function renderAuthList(auths) {
         item.innerHTML = `
             <div class="auth-info">
                 <h4>Auth #${auth.index}</h4>
-                <p>${auth.fileName}</p>
-                <p><small>${auth.accountName || 'Unknown Account'}</small></p>
+                <p><small>${auth.name || 'Unknown Account'}</small></p>
             </div>
             <div class="auth-actions">
                 <button class="btn btn-secondary btn-sm" onclick="editAuth(${auth.index})">Edit</button>

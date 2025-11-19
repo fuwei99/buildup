@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  buildup:
+    image: ghcr.io/fuwei99/buildup:fangnimadepi
+    container_name: buildup-proxy
+    restart: unless-stopped
+
+    # 端口映射
+    ports:
+      - "${PORT:-7860}:7860"
+
+    # 环境变量配置
+    environment:
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=${PORT:-7860}
+      - STREAMING_MODE=${STREAMING_MODE:-real}
+      - FAILURE_THRESHOLD=${FAILURE_THRESHOLD:-0}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - RETRY_DELAY=${RETRY_DELAY:-3000}
+      - API_KEYS=${API_KEYS:-}
+      - INITIAL_AUTH_INDEX=${INITIAL_AUTH_INDEX:-}
+      - IMMEDIATE_SWITCH_STATUS_CODES=${IMMEDIATE_SWITCH_STATUS_CODES:-429,503}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+
+      # 认证配置 (可选，支持多个认证源)
+      # - AUTH_JSON_1={"username":"user1","password":"pass1"}
+      # - AUTH_JSON_2={"username":"user2","password":"pass2"}
+
+    # 数据卷挂载
+    volumes:
+      # 挂载认证文件目录 (如果使用文件认证)
+      - ./auth:/home/user/auth:ro
+      # 挂载配置文件 (可选)
+      - ./config.json:/home/user/config.json:ro
+      # 挂载模型配置文件 (可选)
+      - ./models.json:/home/user/models.json:ro
+      # 持久化数据目录 (日志、临时文件等)
+      - ./data:/home/user/data
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-2g}
+          cpus: ${CPU_LIMIT:-1.0}
+        reservations:
+          memory: ${MEMORY_RESERVATION:-512m}
+          cpus: ${CPU_RESERVATION:-0.5}
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # 网络配置
+    networks:
+      - buildup-network
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  buildup-network:
+    driver: bridge
+
+volumes:
+  buildup-data:
+    driver: local
