@@ -2,3 +2,5 @@ node_modules/
 camoufox/
 camoufox-linux/
 .env
+auth/*.json
+single-line-auth/*.json
