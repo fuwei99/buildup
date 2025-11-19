@@ -1,5 +1,3 @@
-const session = require("express-session");
-const cookieParser = require("cookie-parser");
 const crypto = require("crypto");
 const express = require("express");
 const WebSocket = require("ws");
@@ -2192,62 +2190,17 @@ class ProxyServerSystem extends EventEmitter {
     app.use(express.json({ limit: "100mb" }));
     app.use(express.urlencoded({ extended: true }));
 
-    const sessionSecret =
-      // Section 1 & 2 (核心中间件和登录路由) 保持不变...
-      (this.config.apiKeys && this.config.apiKeys[0]) ||
-      crypto.randomBytes(20).toString("hex");
-    app.use(cookieParser());
-    app.use(
-      session({
-        secret: sessionSecret,
-        resave: false,
-        saveUninitialized: true,
-        cookie: { secure: false, maxAge: 86400000 },
-      })
-    );
-    const isAuthenticated = (req, res, next) => {
-      if (req.session.isAuthenticated) {
-        return next();
-      }
-      res.redirect("/login");
-    };
-    app.get("/login", (req, res) => {
-      if (req.session.isAuthenticated) {
-        return res.redirect("/");
-      }
-      const loginHtml = `
-      <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>登录</title>
-      <style>body{display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;background:#f0f2f5}form{background:white;padding:40px;border-radius:10px;box-shadow:0 4px 8px rgba(0,0,0,0.1);text-align:center}input{width:250px;padding:10px;margin-top:10px;border:1px solid #ccc;border-radius:5px}button{width:100%;padding:10px;background-color:#007bff;color:white;border:none;border-radius:5px;margin-top:20px;cursor:pointer}.error{color:red;margin-top:10px}</style>
-      </head><body><form action="/login" method="post"><h2>请输入 API Key</h2>
-      <input type="password" name="apiKey" placeholder="API Key" required autofocus><button type="submit">登录</button>
-      ${req.query.error ? '<p class="error">API Key 错误!</p>' : ""
-        }</form></body></html>`;
-      res.send(loginHtml);
-    });
-    app.post("/login", (req, res) => {
-      const { apiKey } = req.body;
-      if (apiKey && this.config.apiKeys.includes(apiKey)) {
-        req.session.isAuthenticated = true;
-        res.redirect("/");
-      } else {
-        res.redirect("/login?error=1");
-      }
-    });
-
-    // ==========================================================
-    // Section 3: 静态资源服务 & API
-    // ==========================================================
-
-    // 1. 托管 web 目录下的静态文件
+    // 托管 web 目录下的静态文件，并设置根路径
     app.use(express.static(path.join(__dirname, 'web')));
-
-    // 2. 根路径重定向到 index.html (如果请求不是API)
-    app.get("/", isAuthenticated, (req, res) => {
+    app.get("/", (req, res) => {
       res.sendFile(path.join(__dirname, 'web', 'index.html'));
     });
 
+    // 对所有 /api 和 /v1 的路径启用 API Key 认证
+    app.use(["/api", "/v1"], this._createAuthMiddleware());
+
     // --- API 路由 ---
-    app.get("/api/status", isAuthenticated, (req, res) => {
+    app.get("/api/status", (req, res) => {
       const { config, requestHandler, authSource, browserManager } = this;
       const initialIndices = authSource.initialIndices || [];
       const invalidIndices = initialIndices.filter(
@@ -2286,7 +2239,7 @@ class ProxyServerSystem extends EventEmitter {
       };
       res.json(data);
     });
-    app.post("/api/switch-account", isAuthenticated, async (req, res) => {
+    app.post("/api/switch-account", async (req, res) => {
       try {
         const { targetIndex } = req.body;
 
@@ -2349,7 +2302,7 @@ class ProxyServerSystem extends EventEmitter {
           .send(`致命错误：操作失败！请检查日志。错误: ${error.message}`);
       }
     });
-    app.post("/api/set-mode", isAuthenticated, (req, res) => {
+    app.post("/api/set-mode", (req, res) => {
       const newMode = req.body.mode;
       if (newMode === "fake" || newMode === "real") {
         this.streamingMode = newMode;
@@ -2361,8 +2314,6 @@ class ProxyServerSystem extends EventEmitter {
         res.status(400).send('无效模式. 请用 "fake" 或 "real".');
       }
     });
-    app.use(this._createAuthMiddleware());
-
     app.get("/v1/models", (req, res) => {
       const modelIds = this.config.modelList || ["gemini-2.5-pro"];
 
