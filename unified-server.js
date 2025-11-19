@@ -231,6 +231,19 @@ class BrowserManager {
         this.browser = null;
         this.context = null;
         this.page = null;
+
+        // [新增] 尝试自动恢复
+        if (this.currentAuthIndex > 0) {
+          this.logger.info(`[Browser] 尝试自动恢复账号 #${this.currentAuthIndex}...`);
+          // 简单的延时重试，避免死循环
+          setTimeout(() => {
+            if (!this.browser) {
+              this.launchOrSwitchContext(this.currentAuthIndex).catch(e => {
+                this.logger.error(`[Browser] 自动恢复失败: ${e.message}`);
+              });
+            }
+          }, 5000);
+        }
       });
       this.logger.info("✅ [Browser] 浏览器实例已成功启动。");
     }
@@ -2105,10 +2118,17 @@ class ProxyServerSystem extends EventEmitter {
       }
 
       if (clientKey && serverApiKeys.includes(clientKey)) {
-        this.logger.info(
-          `[Auth] API Key验证通过 (来自: ${req.headers["x-forwarded-for"] || req.ip
-          })`
-        );
+        // [优化] 仅对非状态检查和非静态资源的请求打印日志，避免刷屏
+        const isStatusCheck = req.path === "/api/status" || req.path === "/" || req.path === "/favicon.ico";
+        const isStaticResource = req.path.match(/\.(css|js|html|png|jpg|ico)$/);
+
+        if (!isStatusCheck && !isStaticResource) {
+          this.logger.info(
+            `[Auth] API Key验证通过 (来自: ${req.headers["x-forwarded-for"] || req.ip
+            })`
+          );
+        }
+
         if (req.query.key) {
           delete req.query.key;
         }
@@ -2194,19 +2214,6 @@ class ProxyServerSystem extends EventEmitter {
     app.use(express.static(path.join(__dirname, 'web')));
     app.get("/", (req, res) => {
       res.sendFile(path.join(__dirname, 'web', 'index.html'));
-    });
-
-    // 对所有 /api 和 /v1 的路径启用 API Key 认证
-    app.use(["/api", "/v1"], this._createAuthMiddleware());
-
-    // --- API 路由 ---
-    app.get("/api/status", (req, res) => {
-      const { config, requestHandler, authSource, browserManager } = this;
-      const initialIndices = authSource.initialIndices || [];
-      const invalidIndices = initialIndices.filter(
-        (i) => !authSource.availableIndices.includes(i)
-      );
-      const logs = this.logger.logBuffer || [];
       const accountNameMap = authSource.accountNameMap;
       const accountDetails = initialIndices.map((index) => {
         const isInvalid = invalidIndices.includes(index);
