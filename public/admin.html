@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Config Admin</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+
+<body>
+    <h1>Auth Config Admin</h1>
+
+    <div id="batch-actions">
+        <h2>Global Actions</h2>
+        <form id="batch-limit-form" style="margin-bottom: 1em;">
+            <input type="number" id="batch-limit-input" placeholder="Set usage limit for all" min="0">
+            <button type="button" id="batch-limit-button">Batch Set Limit</button>
+        </form>
+    </div>
+
+    <hr>
+
+    <div id="config-list">
+        <!-- Config items will be rendered here -->
+    </div>
+
+    <hr>
+
+    <div id="logs-container">
+        <h2>Logs</h2>
+        <button type="button" id="refresh-logs-button">Refresh Logs</button>
+        <pre id="logs-content">Loading logs...</pre>
+    </div>
+
+    <hr>
+
+    <div id="form-container">
+        <h2>Add/Edit Config</h2>
+        <form id="config-form">
+            <input type="hidden" id="edit-index" value="">
+            <textarea id="json-input" rows="10" cols="50" placeholder="Enter JSON config..."></textarea>
+            <br>
+            <button type="submit">Save Config</button>
+        </form>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+
+</html>
