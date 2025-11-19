@@ -1169,7 +1169,7 @@ class RequestHandler {
         if (realModel.includes("-nothinking")) {
             realModel = realModel.replace("-nothinking", "");
             if (realModel.includes("gemini-3")) {
-                thinkingConfig.thinkingLevel = "low";
+                thinkingConfig.thinkingLevel = "LOW";
             } else if (realModel.includes("gemini-2.5")) {
                 thinkingConfig.thinkingBudget = 128;
             } else if (realModel.includes("flash")) {
@@ -1178,7 +1178,7 @@ class RequestHandler {
         } else if (realModel.includes("-max")) {
             realModel = realModel.replace("-max", "");
             if (realModel.includes("gemini-3")) {
-                thinkingConfig.thinkingLevel = "high";
+                thinkingConfig.thinkingLevel = "HIGH";
             } else if (realModel.includes("gemini-2.5")) {
                 thinkingConfig.thinkingBudget = 32768;
             }
