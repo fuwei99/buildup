@@ -1079,16 +1079,6 @@ class RequestHandler {
             }
         }
 
-        const modelNameFromBody = req.body.model || "";
-        const isFakeMode = modelNameFromBody.startsWith("fake-");
-
-        if (isFakeMode) {
-            // 直接修改请求体中的模型名称
-            req.body.model = modelNameFromBody.substring(5);
-            this.logger.info(
-                `[Request] 检测到 'fake-' 前缀，模型切换为 '${req.body.model}'，模式设置为 'fake'。`
-            );
-        }
 
         const proxyRequest = this._buildProxyRequest(req, requestId);
         proxyRequest.is_generative = isGenerativeRequest;
@@ -1098,11 +1088,6 @@ class RequestHandler {
             req.headers.accept && req.headers.accept.includes("text/event-stream");
         const wantsStreamByPath = req.path.includes(":streamGenerateContent");
         const wantsStream = wantsStreamByHeader || wantsStreamByPath;
-
-        // 如果模型名称包含 fake- 前缀，则强制使用 fake 模式
-        if (isFakeMode) {
-            proxyRequest.streaming_mode = "fake";
-        }
 
         try {
             if (wantsStream) {
@@ -1165,23 +1150,24 @@ class RequestHandler {
 
         const isOpenAIStream = req.body.stream === true;
         let model = req.body.model || "gemini-1.5-pro-latest";
-        const isFakeMode = model.startsWith("fake-");
         let streamingModeForBrowser = isOpenAIStream ? "real" : "fake";
+        let isFakeMode = false;
 
-        if (isFakeMode) {
-            model = model.substring(5);
-            streamingModeForBrowser = "fake";
-            this.logger.info(
-                `[Adapter] 检测到 'fake-' 前缀，模型切换为 '${model}'，模式设置为 'fake'。`
-            );
-        }
-
-        // 1. 解析模型名称和后缀，确定 Thinking 策略
+        // 1. 解析模型名称和后缀，确定 Thinking 策略和 Fake 模式
         let realModel = model;
         let thinkingConfig = { includeThoughts: true }; // 默认开启
 
-        if (model.includes("-nothinking")) {
-            realModel = model.replace("-nothinking", "");
+        if (model.startsWith("fake-")) {
+            isFakeMode = true;
+            realModel = model.substring(5);
+            streamingModeForBrowser = "fake";
+            this.logger.info(
+                `[Adapter] 检测到 'fake-' 前缀，模型切换为 '${realModel}'，模式设置为 'fake'。`
+            );
+        }
+
+        if (realModel.includes("-nothinking")) {
+            realModel = realModel.replace("-nothinking", "");
             if (realModel.includes("gemini-3")) {
                 thinkingConfig.thinkingLevel = "low";
             } else if (realModel.includes("gemini-2.5")) {
@@ -1189,8 +1175,8 @@ class RequestHandler {
             } else if (realModel.includes("flash")) {
                 thinkingConfig.thinkingBudget = 0;
             }
-        } else if (model.includes("-max")) {
-            realModel = model.replace("-max", "");
+        } else if (realModel.includes("-max")) {
+            realModel = realModel.replace("-max", "");
             if (realModel.includes("gemini-3")) {
                 thinkingConfig.thinkingLevel = "high";
             } else if (realModel.includes("gemini-2.5")) {
