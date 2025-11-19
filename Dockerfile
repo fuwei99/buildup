@@ -34,6 +34,8 @@ RUN npm install
 
 # 复制应用文件
 COPY unified-server.js black-browser.js ./
+COPY config.json models.json ./
+COPY web/ ./web/
 COPY auth/ ./auth/
 COPY camoufox-linux/ ./camoufox-linux/
 
