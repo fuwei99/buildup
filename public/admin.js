@@ -6,6 +6,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const editIndexInput = document.getElementById('edit-index');
     const searchInput = document.getElementById('search-input');
 
+    // Status Monitoring Elements
+    const currentAccountEl = document.getElementById('current-account');
+    const currentAccountNameEl = document.getElementById('current-account-name');
+    const usageCountEl = document.getElementById('usage-count');
+    const switchThresholdEl = document.getElementById('switch-threshold');
+    const usageProgressEl = document.getElementById('usage-progress');
+    const failureCountEl = document.getElementById('failure-count');
+    const failureThresholdEl = document.getElementById('failure-threshold');
+    const failureProgressEl = document.getElementById('failure-progress');
+    const browserStatusEl = document.getElementById('browser-status');
+    const browserStatusDescEl = document.getElementById('browser-status-desc');
+    const streamModeEl = document.getElementById('stream-mode');
+    const streamModeDescEl = document.getElementById('stream-mode-desc');
+    const systemHealthEl = document.getElementById('system-health');
+    const systemHealthDescEl = document.getElementById('system-health-desc');
+
+    // Quick Actions Elements
+    const quickAccountSelect = document.getElementById('quick-account-select');
+    const quickSwitchBtn = document.getElementById('quick-switch-btn');
+    const setRealModeBtn = document.getElementById('set-real-mode');
+    const setFakeModeBtn = document.getElementById('set-fake-mode');
+    const toggleRefreshBtn = document.getElementById('toggle-refresh-btn');
+    const refreshIndicatorEl = document.getElementById('refresh-indicator');
+    const refreshTextEl = document.getElementById('refresh-text');
+
+    // Auto Refresh Elements
+    const autoRefreshToggle = document.getElementById('auto-refresh-toggle');
+    const refreshIntervalSelect = document.getElementById('refresh-interval');
+    const manualRefreshBtn = document.getElementById('manual-refresh-btn');
+
     // Modal Elements
     const configModal = document.getElementById('config-modal');
     const batchLimitModal = document.getElementById('batch-limit-modal');
@@ -44,6 +74,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // State
     let currentConfigs = [];
     let confirmCallback = null;
+    let autoRefreshEnabled = true;
+    let refreshInterval = 10000; // 默认10秒
+    let refreshTimer = null;
+    let currentStatusData = null;
 
     // Toast Notification System
     const showToast = (message, type = 'info', title = null) => {
@@ -128,6 +162,194 @@ document.addEventListener('DOMContentLoaded', () => {
         confirmMessage.textContent = message;
         confirmCallback = callback;
         showModal(confirmDialog);
+    };
+
+    // Status Monitoring Functions
+    const updateStatusDisplay = async () => {
+        try {
+            const response = await fetch('/api/status');
+            if (!response.ok) throw new Error('获取状态失败');
+
+            const data = await response.json();
+            currentStatusData = data.status;
+
+            // 更新当前账号信息
+            currentAccountEl.textContent = `#${currentStatusData.currentAuthIndex}`;
+            const accountDetail = currentStatusData.accountDetails?.find(acc => acc.index === currentStatusData.currentAuthIndex);
+            currentAccountNameEl.textContent = accountDetail ? accountDetail.name : '未知账号';
+
+            // 更新使用次数信息
+            const usageMatch = currentStatusData.usageCount.match(/(\d+)\s*\/\s*(\d+)/);
+            if (usageMatch) {
+                const current = parseInt(usageMatch[1]);
+                const max = parseInt(usageMatch[2]);
+                usageCountEl.textContent = `${current} / ${max}`;
+                switchThresholdEl.textContent = max;
+                const percentage = max > 0 ? (current / max) * 100 : 0;
+                usageProgressEl.style.width = `${Math.min(percentage, 100)}%`;
+
+                // 根据使用率设置进度条颜色
+                usageProgressEl.className = 'progress-fill';
+                if (percentage >= 80) {
+                    usageProgressEl.classList.add('progress-high');
+                } else if (percentage >= 50) {
+                    usageProgressEl.classList.add('progress-medium');
+                } else {
+                    usageProgressEl.classList.add('progress-low');
+                }
+            }
+
+            // 更新失败次数信息
+            const failureMatch = currentStatusData.failureCount.match(/(\d+)\s*\/\s*(\d+)/);
+            if (failureMatch) {
+                const current = parseInt(failureMatch[1]);
+                const max = parseInt(failureMatch[2]);
+                failureCountEl.textContent = `${current} / ${max}`;
+                failureThresholdEl.textContent = max;
+                const percentage = max > 0 ? (current / max) * 100 : 0;
+                failureProgressEl.style.width = `${Math.min(percentage, 100)}%`;
+
+                // 根据失败率设置进度条颜色
+                failureProgressEl.className = 'progress-fill';
+                if (percentage >= 80) {
+                    failureProgressEl.classList.add('progress-high');
+                } else if (percentage >= 50) {
+                    failureProgressEl.classList.add('progress-medium');
+                } else {
+                    failureProgressEl.classList.add('progress-low');
+                }
+            }
+
+            // 更新浏览器连接状态
+            const browserConnected = currentStatusData.browserConnected;
+            browserStatusEl.textContent = browserConnected ? '已连接' : '未连接';
+            browserStatusEl.style.color = browserConnected ? 'var(--success)' : 'var(--danger)';
+            browserStatusDescEl.textContent = browserConnected ? '浏览器正常运行' : '浏览器连接异常';
+
+            // 更新流模式状态
+            const streamMode = currentStatusData.streamingMode;
+            streamModeEl.textContent = streamMode.includes('real') ? 'Real 模式' : 'Fake 模式';
+            streamModeDescEl.textContent = streamMode;
+
+            // 更新系统健康状态
+            systemHealthEl.textContent = '运行中';
+            systemHealthEl.style.color = 'var(--success)';
+            systemHealthDescEl.textContent = '服务正常运行';
+
+        } catch (error) {
+            console.error('更新状态显示失败:', error);
+            showToast('更新状态显示失败', 'error');
+        }
+    };
+
+    const updateAccountOptions = async () => {
+        try {
+            const response = await fetch('/api/auth/configs');
+            if (!response.ok) throw new Error('获取账号列表失败');
+
+            const configs = await response.json();
+            quickAccountSelect.innerHTML = '<option value="">选择账号...</option>';
+
+            configs.forEach(config => {
+                const option = document.createElement('option');
+                option.value = config.index;
+                option.textContent = `账号 #${config.index}`;
+                quickAccountSelect.appendChild(option);
+            });
+
+        } catch (error) {
+            console.error('更新账号选项失败:', error);
+            showToast('更新账号选项失败', 'error');
+        }
+    };
+
+    const startAutoRefresh = () => {
+        if (refreshTimer) {
+            clearInterval(refreshTimer);
+        }
+
+        if (autoRefreshEnabled) {
+            refreshTimer = setInterval(async () => {
+                await updateStatusDisplay();
+                await renderConfigs(searchInput.value);
+            }, refreshInterval);
+
+            refreshIndicatorEl.classList.remove('disabled');
+            refreshTextEl.textContent = '已启用';
+        } else {
+            refreshIndicatorEl.classList.add('disabled');
+            refreshTextEl.textContent = '已禁用';
+        }
+    };
+
+    const stopAutoRefresh = () => {
+        if (refreshTimer) {
+            clearInterval(refreshTimer);
+            refreshTimer = null;
+        }
+    };
+
+    // Quick Actions Functions
+    const quickSwitchAccount = async () => {
+        const targetIndex = quickAccountSelect.value;
+        if (!targetIndex) {
+            showToast('请先选择要切换的账号', 'warning');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/switch-account', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ targetIndex: parseInt(targetIndex, 10) })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText);
+            }
+
+            const result = await response.text();
+            showToast(result, 'success');
+            await updateStatusDisplay();
+
+        } catch (error) {
+            console.error('快速切换账号失败:', error);
+            showToast(`快速切换账号失败: ${error.message}`, 'error');
+        }
+    };
+
+    const setStreamMode = async (mode) => {
+        try {
+            const response = await fetch('/api/set-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText);
+            }
+
+            const result = await response.text();
+            showToast(result, 'success');
+            await updateStatusDisplay();
+
+            // 更新按钮状态
+            setRealModeBtn.classList.toggle('active', mode === 'real');
+            setFakeModeBtn.classList.toggle('active', mode === 'fake');
+
+        } catch (error) {
+            console.error('设置流模式失败:', error);
+            showToast(`设置流模式失败: ${error.message}`, 'error');
+        }
+    };
+
+    const toggleAutoRefresh = () => {
+        autoRefreshEnabled = !autoRefreshEnabled;
+        autoRefreshToggle.checked = autoRefreshEnabled;
+        startAutoRefresh();
     };
 
     // Update Stats
@@ -293,6 +515,34 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // Event Listeners
+
+    // Auto Refresh Controls
+    autoRefreshToggle.addEventListener('change', () => {
+        autoRefreshEnabled = autoRefreshToggle.checked;
+        startAutoRefresh();
+    });
+
+    refreshIntervalSelect.addEventListener('change', (e) => {
+        refreshInterval = parseInt(e.target.value, 10);
+        if (autoRefreshEnabled) {
+            startAutoRefresh();
+        }
+    });
+
+    manualRefreshBtn.addEventListener('click', async () => {
+        await updateStatusDisplay();
+        await renderConfigs(searchInput.value);
+        await updateAccountOptions();
+        showToast('手动刷新完成', 'success');
+    });
+
+    // Quick Actions Event Listeners
+    quickSwitchBtn.addEventListener('click', quickSwitchAccount);
+
+    setRealModeBtn.addEventListener('click', () => setStreamMode('real'));
+    setFakeModeBtn.addEventListener('click', () => setStreamMode('fake'));
+
+    toggleRefreshBtn.addEventListener('click', toggleAutoRefresh);
 
     // New Config Button
     newConfigBtn.addEventListener('click', () => {
@@ -542,5 +792,34 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Initial load
-    renderConfigs();
+    const initializeApp = async () => {
+        try {
+            // 初始化状态显示
+            await updateStatusDisplay();
+
+            // 初始化账号选项
+            await updateAccountOptions();
+
+            // 初始化自动刷新
+            startAutoRefresh();
+
+            // 初始化流模式按钮状态
+            if (currentStatusData) {
+                const currentMode = currentStatusData.streamingMode.includes('real') ? 'real' : 'fake';
+                setRealModeBtn.classList.toggle('active', currentMode === 'real');
+                setFakeModeBtn.classList.toggle('active', currentMode === 'fake');
+            }
+
+            // 加载配置列表
+            await renderConfigs();
+
+            showToast('管理面板加载完成', 'success');
+        } catch (error) {
+            console.error('初始化应用失败:', error);
+            showToast('初始化应用失败', 'error');
+        }
+    };
+
+    // 启动应用
+    initializeApp();
 });

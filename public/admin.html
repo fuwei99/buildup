@@ -88,6 +88,212 @@
                 </div>
             </section>
 
+            <!-- Status Monitoring Panel -->
+            <section class="status-panel">
+                <div class="status-header">
+                    <h2 class="status-title">实时状态监控</h2>
+                    <div class="status-controls">
+                        <label class="auto-refresh-toggle">
+                            <input type="checkbox" id="auto-refresh-toggle" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">自动刷新</span>
+                        </label>
+                        <select id="refresh-interval" class="refresh-interval-select">
+                            <option value="5000">5秒</option>
+                            <option value="10000" selected>10秒</option>
+                            <option value="30000">30秒</option>
+                            <option value="60000">1分钟</option>
+                        </select>
+                        <button id="manual-refresh-btn" class="btn btn-secondary btn-sm">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path
+                                    d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+                            </svg>
+                            手动刷新
+                        </button>
+                    </div>
+                </div>
+
+                <div class="status-grid">
+                    <!-- Current Account Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon account-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                                    <circle cx="12" cy="7" r="4" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">当前账号</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="current-account">加载中...</div>
+                            <div class="status-description" id="current-account-name">获取账号信息中...</div>
+                        </div>
+                    </div>
+
+                    <!-- Usage Count Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon usage-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">使用次数</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="usage-count">0 / 0</div>
+                            <div class="status-description">切换阈值: <span id="switch-threshold">未设置</span></div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="usage-progress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Failure Count Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon failure-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="15" y1="9" x2="9" y2="15" />
+                                    <line x1="9" y1="9" x2="15" y2="15" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">连续失败</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="failure-count">0 / 0</div>
+                            <div class="status-description">失败阈值: <span id="failure-threshold">未设置</span></div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="failure-progress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Browser Connection Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon browser-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <polyline points="12,6 12,12 16,14" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">浏览器连接</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="browser-status">检查中...</div>
+                            <div class="status-description" id="browser-status-desc">正在检测连接状态</div>
+                        </div>
+                    </div>
+
+                    <!-- Stream Mode Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon stream-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+                                    <circle cx="12" cy="12" r="3" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">流模式</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="stream-mode">加载中...</div>
+                            <div class="status-description" id="stream-mode-desc">当前流式传输模式</div>
+                        </div>
+                    </div>
+
+                    <!-- System Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon system-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                                    <line x1="8" y1="21" x2="16" y2="21" />
+                                    <line x1="12" y1="17" x2="12" y2="21" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">系统状态</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="system-health">运行中</div>
+                            <div class="status-description" id="system-health-desc">服务正常运行</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quick Actions Panel -->
+            <section class="quick-actions-panel">
+                <div class="quick-actions-header">
+                    <h2 class="quick-actions-title">快速操作</h2>
+                </div>
+                <div class="quick-actions-grid">
+                    <!-- Account Switch -->
+                    <div class="quick-action-card">
+                        <h3 class="quick-action-title">账号切换</h3>
+                        <div class="quick-action-content">
+                            <select id="quick-account-select" class="quick-select">
+                                <option value="">选择账号...</option>
+                            </select>
+                            <button id="quick-switch-btn" class="btn btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                </svg>
+                                快速切换
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Stream Mode Toggle -->
+                    <div class="quick-action-card">
+                        <h3 class="quick-action-title">流模式切换</h3>
+                        <div class="quick-action-content">
+                            <div class="mode-toggle-group">
+                                <button id="set-real-mode" class="btn btn-secondary mode-btn" data-mode="real">
+                                    Real 模式
+                                </button>
+                                <button id="set-fake-mode" class="btn btn-secondary mode-btn" data-mode="fake">
+                                    Fake 模式
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Auto Refresh Control -->
+                    <div class="quick-action-card">
+                        <h3 class="quick-action-title">自动刷新控制</h3>
+                        <div class="quick-action-content">
+                            <div class="refresh-status">
+                                <span class="refresh-indicator" id="refresh-indicator"></span>
+                                <span class="refresh-text" id="refresh-text">已启用</span>
+                            </div>
+                            <button id="toggle-refresh-btn" class="btn btn-secondary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path
+                                        d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                                    <line x1="12" y1="9" x2="12" y2="13" />
+                                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                                </svg>
+                                切换状态
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Toolbar Section -->
             <section class="toolbar-section">
                 <div class="toolbar-left">
