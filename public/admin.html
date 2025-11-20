@@ -1,49 +1,440 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auth Config Admin</title>
+    <title>Auth Admin Dashboard</title>
     <link rel="stylesheet" href="admin.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
 <body>
-    <h1>Auth Config Admin</h1>
+    <!-- Header Navigation -->
+    <header class="header">
+        <div class="header-container">
+            <div class="header-left">
+                <h1 class="logo">Auth Admin</h1>
+            </div>
+            <div class="header-right">
+                <button id="refresh-data-btn" class="btn btn-secondary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path
+                            d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+                    </svg>
+                    刷新数据
+                </button>
+                <button id="view-logs-btn" class="btn btn-secondary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                        <polyline points="14,2 14,8 20,8" />
+                        <line x1="16" y1="13" x2="8" y2="13" />
+                        <line x1="16" y1="17" x2="8" y2="17" />
+                        <polyline points="10,9 9,9 8,9" />
+                    </svg>
+                    查看日志
+                </button>
+            </div>
+        </div>
+    </header>
 
-    <div id="batch-actions">
-        <h2>Global Actions</h2>
-        <form id="batch-limit-form" style="margin-bottom: 1em;">
-            <input type="number" id="batch-limit-input" placeholder="Set usage limit for all" min="0">
-            <button type="button" id="batch-limit-button">Batch Set Limit</button>
-        </form>
-    </div>
+    <!-- Main Content -->
+    <main class="main">
+        <div class="container">
+            <!-- Stats Section -->
+            <section class="stats-section">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                            <path d="M2 17l10 5 10-5" />
+                            <path d="M2 12l10 5 10-5" />
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <h3 class="stat-title">总配置数</h3>
+                        <p class="stat-value" id="total-configs">0</p>
+                    </div>
+                </div>
 
-    <hr>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <h3 class="stat-title">总使用量</h3>
+                        <p class="stat-value" id="total-usage">0</p>
+                    </div>
+                </div>
 
-    <div id="config-list">
-        <!-- Config items will be rendered here -->
-    </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="12" cy="12" r="10" />
+                            <polyline points="12,6 12,12 16,14" />
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <h3 class="stat-title">系统状态</h3>
+                        <p class="stat-value" id="system-status">正常</p>
+                    </div>
+                </div>
+            </section>
 
-    <hr>
+            <!-- Status Monitoring Panel -->
+            <section class="status-panel">
+                <div class="status-header">
+                    <h2 class="status-title">实时状态监控</h2>
+                    <div class="status-controls">
+                        <label class="auto-refresh-toggle">
+                            <input type="checkbox" id="auto-refresh-toggle" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">自动刷新</span>
+                        </label>
+                        <select id="refresh-interval" class="refresh-interval-select">
+                            <option value="5000">5秒</option>
+                            <option value="10000" selected>10秒</option>
+                            <option value="30000">30秒</option>
+                            <option value="60000">1分钟</option>
+                        </select>
+                        <button id="manual-refresh-btn" class="btn btn-secondary btn-sm">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path
+                                    d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+                            </svg>
+                            手动刷新
+                        </button>
+                    </div>
+                </div>
 
-    <div id="logs-container">
-        <h2>Logs</h2>
-        <button type="button" id="refresh-logs-button">Refresh Logs</button>
-        <pre id="logs-content">Loading logs...</pre>
-    </div>
+                <div class="status-grid">
+                    <!-- Current Account Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon account-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                                    <circle cx="12" cy="7" r="4" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">当前账号</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="current-account">加载中...</div>
+                            <div class="status-description" id="current-account-name">获取账号信息中...</div>
+                        </div>
+                    </div>
 
-    <hr>
+                    <!-- Usage Count Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon usage-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">使用次数</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="usage-count">0 / 0</div>
+                            <div class="status-description">切换阈值: <span id="switch-threshold">未设置</span></div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="usage-progress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
 
-    <div id="form-container">
-        <h2>Add/Edit Config</h2>
-        <form id="config-form">
-            <input type="hidden" id="edit-index" value="">
-            <textarea id="json-input" rows="10" cols="50" placeholder="Enter JSON config..."></textarea>
-            <br>
-            <button type="submit">Save Config</button>
-        </form>
-    </div>
+                    <!-- Failure Count Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon failure-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="15" y1="9" x2="9" y2="15" />
+                                    <line x1="9" y1="9" x2="15" y2="15" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">连续失败</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="failure-count">0 / 0</div>
+                            <div class="status-description">失败阈值: <span id="failure-threshold">未设置</span></div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="failure-progress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Browser Connection Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon browser-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <polyline points="12,6 12,12 16,14" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">浏览器连接</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="browser-status">检查中...</div>
+                            <div class="status-description" id="browser-status-desc">正在检测连接状态</div>
+                        </div>
+                    </div>
+
+                    <!-- Stream Mode Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon stream-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+                                    <circle cx="12" cy="12" r="3" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">流模式</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="stream-mode">加载中...</div>
+                            <div class="status-description" id="stream-mode-desc">当前流式传输模式</div>
+                        </div>
+                    </div>
+
+                    <!-- System Status -->
+                    <div class="status-card">
+                        <div class="status-card-header">
+                            <div class="status-icon system-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                                    <line x1="8" y1="21" x2="16" y2="21" />
+                                    <line x1="12" y1="17" x2="12" y2="21" />
+                                </svg>
+                            </div>
+                            <h3 class="status-card-title">系统状态</h3>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-value" id="system-health">运行中</div>
+                            <div class="status-description" id="system-health-desc">服务正常运行</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quick Actions Panel -->
+            <section class="quick-actions-panel">
+                <div class="quick-actions-header">
+                    <h2 class="quick-actions-title">快速操作</h2>
+                </div>
+                <div class="quick-actions-grid">
+                    <!-- Account Switch -->
+                    <div class="quick-action-card">
+                        <h3 class="quick-action-title">账号切换</h3>
+                        <div class="quick-action-content">
+                            <select id="quick-account-select" class="quick-select">
+                                <option value="">选择账号...</option>
+                            </select>
+                            <button id="quick-switch-btn" class="btn btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                </svg>
+                                快速切换
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Stream Mode Toggle -->
+                    <div class="quick-action-card">
+                        <h3 class="quick-action-title">流模式切换</h3>
+                        <div class="quick-action-content">
+                            <div class="mode-toggle-group">
+                                <button id="set-real-mode" class="btn btn-secondary mode-btn" data-mode="real">
+                                    Real 模式
+                                </button>
+                                <button id="set-fake-mode" class="btn btn-secondary mode-btn" data-mode="fake">
+                                    Fake 模式
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Auto Refresh Control -->
+                    <div class="quick-action-card">
+                        <h3 class="quick-action-title">自动刷新控制</h3>
+                        <div class="quick-action-content">
+                            <div class="refresh-status">
+                                <span class="refresh-indicator" id="refresh-indicator"></span>
+                                <span class="refresh-text" id="refresh-text">已启用</span>
+                            </div>
+                            <button id="toggle-refresh-btn" class="btn btn-secondary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path
+                                        d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                                    <line x1="12" y1="9" x2="12" y2="13" />
+                                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                                </svg>
+                                切换状态
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Toolbar Section -->
+            <section class="toolbar-section">
+                <div class="toolbar-left">
+                    <div class="search-box">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="m21 21-4.35-4.35" />
+                        </svg>
+                        <input type="text" id="search-input" placeholder="搜索配置...">
+                    </div>
+                </div>
+                <div class="toolbar-right">
+                    <button id="batch-limit-btn" class="btn btn-secondary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M12 20V10M6 20V4M18 20v-4" />
+                        </svg>
+                        批量设置限制
+                    </button>
+                    <button id="new-config-btn" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19" />
+                            <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                        新建配置
+                    </button>
+                </div>
+            </section>
+
+            <!-- Config Grid -->
+            <section class="config-section">
+                <div id="config-list" class="config-grid">
+                    <!-- Config cards will be rendered here -->
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Config Editor Modal -->
+    <dialog id="config-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title" id="modal-title">新建配置</h2>
+                <button class="modal-close" id="modal-close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="config-form">
+                    <input type="hidden" id="edit-index" value="">
+                    <div class="form-group">
+                        <label for="json-input">JSON 配置</label>
+                        <textarea id="json-input" rows="15" placeholder="输入 JSON 配置..."></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancel-btn">取消</button>
+                        <button type="submit" class="btn btn-primary">保存配置</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Batch Limit Modal -->
+    <dialog id="batch-limit-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">批量设置限制</h2>
+                <button class="modal-close" id="batch-limit-modal-close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="batch-limit-form">
+                    <div class="form-group">
+                        <label for="batch-limit-input">使用限制</label>
+                        <input type="number" id="batch-limit-input" placeholder="设置所有配置的使用限制" min="0">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="batch-limit-cancel-btn">取消</button>
+                        <button type="submit" class="btn btn-primary">确认设置</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Logs Modal -->
+    <dialog id="logs-modal" class="modal modal-large">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">系统日志</h2>
+                <button class="modal-close" id="logs-modal-close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="logs-toolbar">
+                    <button id="refresh-logs-button" class="btn btn-secondary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path
+                                d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+                        </svg>
+                        刷新日志
+                    </button>
+                </div>
+                <pre id="logs-content" class="logs-content">加载日志中...</pre>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Confirm Dialog -->
+    <dialog id="confirm-dialog" class="modal modal-small">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">确认操作</h2>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message">确定要执行此操作吗？</p>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="confirm-cancel">取消</button>
+                    <button type="button" class="btn btn-danger" id="confirm-ok">确认</button>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
 
     <script src="admin.js"></script>
 </body>

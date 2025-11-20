@@ -2482,205 +2482,8 @@ class ProxyServerSystem extends EventEmitter {
         // Section 3: 状态页面 和 API (最终版)
         // ==========================================================
         app.get("/", isAuthenticated, (req, res) => {
-            const { config, requestHandler, authSource, browserManager } = this;
-            const initialIndices = authSource.initialIndices || [];
-            const availableIndices = authSource.availableIndices || [];
-            const invalidIndices = initialIndices.filter(
-                (i) => !availableIndices.includes(i)
-            );
-            const logs = this.logger.logBuffer || [];
-
-            const accountNameMap = authSource.accountNameMap;
-            const accountDetailsHtml = initialIndices
-                .map((index) => {
-                    const isInvalid = invalidIndices.includes(index);
-                    const name = isInvalid
-                        ? "N/A (JSON格式错误)"
-                        : accountNameMap.get(index) || "N/A (未命名)";
-                    return `<span class="label" style="padding-left: 20px;">账号${index}</span>: ${name}`;
-                })
-                .join("\n");
-
-            const accountOptionsHtml = availableIndices
-                .map((index) => `<option value="${index}">账号 #${index}</option>`)
-                .join("");
-
-            const statusHtml = `
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>代理服务状态</title>
-        <style>
-        body { font-family: 'SF Mono', 'Consolas', 'Menlo', monospace; background-color: #f0f2f5; color: #333; padding: 2em; }
-        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 1em 2em 2em 2em; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        h1, h2 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 0.5em;}
-        pre { background: #2d2d2d; color: #f0f0f0; font-size: 1.1em; padding: 1.5em; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; line-height: 1.6; }
-        #log-container { font-size: 0.9em; max-height: 400px; overflow-y: auto; }
-        .status-ok { color: #2ecc71; font-weight: bold; }
-        .status-error { color: #e74c3c; font-weight: bold; }
-        .label { display: inline-block; width: 220px; box-sizing: border-box; }
-        .dot { height: 10px; width: 10px; background-color: #bbb; border-radius: 50%; display: inline-block; margin-left: 10px; animation: blink 1s infinite alternate; }
-        @keyframes blink { from { opacity: 0.3; } to { opacity: 1; } }
-        .action-group { display: flex; flex-wrap: wrap; gap: 15px; align-items: center; }
-        .action-group button, .action-group select { font-size: 1em; border: 1px solid #ccc; padding: 10px 15px; border-radius: 8px; cursor: pointer; transition: background-color 0.3s ease; }
-        .action-group button:hover { opacity: 0.85; }
-        .action-group button { background-color: #007bff; color: white; border-color: #007bff; }
-        .action-group select { background-color: #ffffff; color: #000000; -webkit-appearance: none; appearance: none; }
-        @media (max-width: 600px) {
-            body { 
-                padding: 0.5em; /* 减小页面整体的边距 */
-            }
-            .container {
-                /* 关键：减小白色卡片的左右内边距，让它更宽 */
-                padding: 1em; 
-                margin: 0;
-            }
-            pre {
-                /* 关键：减小黑色代码框的内边距 */
-                padding: 1em;
-                font-size: 0.9em; /* 让字体稍微小一点，容纳更多内容 */
-            }
-            .label {
-                /* 关键：移除固定的 220px 宽度，让标签宽度自动适应 */
-                width: auto; 
-                /* 并且，我们不再需要它是一个'块'，让它和文本流在一起 */
-                display: inline;
-            }
-            .action-group {
-                flex-direction: column; /* 让操作按钮垂直堆叠 */
-                align-items: stretch; /* 让按钮占满宽度 */
-            }
-            .action-group select, .action-group button {
-                width: 100%;
-                box-sizing: border-box; 
-            }
-        }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-        <h1>代理服务状态 <span class="dot" title="数据动态刷新中..."></span></h1>
-        <div id="status-section">
-            <pre>
-<span class="label">服务状态</span>: <span class="status-ok">Running</span>
-<span class="label">浏览器连接</span>: <span class="${browserManager.browser ? "status-ok" : "status-error"
-                }">${!!browserManager.browser}</span>
---- 服务配置 ---
-<span class="label">流模式</span>: ${config.streamingMode
-                } (仅启用流式传输时生效)
-<span class="label">立即切换 (状态码)</span>: ${config.immediateSwitchStatusCodes.length > 0
-                    ? `[${config.immediateSwitchStatusCodes.join(", ")}]`
-                    : "已禁用"
-                }
-<span class="label">API 密钥</span>: ${config.apiKeySource}
---- 账号状态 ---
-<span class="label">当前使用账号</span>: #${requestHandler.currentAuthIndex}
-<span class="label">使用次数计数</span>: ${requestHandler.usageCount} / ${config.switchOnUses > 0 ? config.switchOnUses : "N/A"
-                }
-<span class="label">连续失败计数</span>: ${requestHandler.failureCount} / ${config.failureThreshold > 0 ? config.failureThreshold : "N/A"
-                }
-<span class="label">扫描到的总帐号</span>: [${initialIndices.join(
-                    ", "
-                )}] (总数: ${initialIndices.length})
-      ${accountDetailsHtml}
-<span class="label">格式错误 (已忽略)</span>: [${invalidIndices.join(
-                    ", "
-                )}] (总数: ${invalidIndices.length})
-            </pre>
-        </div>
-        <div id="log-section" style="margin-top: 2em;">
-            <h2>实时日志 (最近 ${logs.length} 条)</h2>
-            <pre id="log-container">${logs.join("\n")}</pre>
-        </div>
-        <div id="actions-section" style="margin-top: 2em;">
-            <h2>操作面板</h2>
-            <div class="action-group">
-                <select id="accountIndexSelect">${accountOptionsHtml}</select>
-                <button onclick="switchSpecificAccount()">切换账号</button>
-                <button onclick="toggleStreamingMode()">切换流模式</button>
-            </div>
-        </div>
-        </div>
-        <script>
-        function updateContent() {
-            fetch('/api/status').then(response => response.json()).then(data => {
-                const statusPre = document.querySelector('#status-section pre');
-                const accountDetailsHtml = data.status.accountDetails.map(acc => {
-                  return '<span class="label" style="padding-left: 20px;">账号' + acc.index + '</span>: ' + acc.name;
-                }).join('\\n');
-                statusPre.innerHTML = 
-                    '<span class="label">服务状态</span>: <span class="status-ok">Running</span>\\n' +
-                    '<span class="label">浏览器连接</span>: <span class="' + (data.status.browserConnected ? "status-ok" : "status-error") + '">' + data.status.browserConnected + '</span>\\n' +
-                    '--- 服务配置 ---\\n' +
-                    '<span class="label">流模式</span>: ' + data.status.streamingMode + '\\n' +
-                    '<span class="label">立即切换 (状态码)</span>: ' + data.status.immediateSwitchStatusCodes + '\\n' +
-                    '<span class="label">API 密钥</span>: ' + data.status.apiKeySource + '\\n' +
-                    '--- 账号状态 ---\\n' +
-                    '<span class="label">当前使用账号</span>: #' + data.status.currentAuthIndex + '\\n' +
-                    '<span class="label">使用次数计数</span>: ' + data.status.usageCount + '\\n' +
-                    '<span class="label">连续失败计数</span>: ' + data.status.failureCount + '\\n' +
-                    '<span class="label">扫描到的总账号</span>: ' + data.status.initialIndices + '\\n' +
-                    accountDetailsHtml + '\\n' +
-                    '<span class="label">格式错误 (已忽略)</span>: ' + data.status.invalidIndices;
-                
-                const logContainer = document.getElementById('log-container');
-                const logTitle = document.querySelector('#log-section h2');
-                const isScrolledToBottom = logContainer.scrollHeight - logContainer.clientHeight <= logContainer.scrollTop + 1;
-                logTitle.innerText = \`实时日志 (最近 \${data.logCount} 条)\`;
-                logContainer.innerText = data.logs;
-                if (isScrolledToBottom) { logContainer.scrollTop = logContainer.scrollHeight; }
-            }).catch(error => console.error('Error fetching new content:', error));
-        }
-
-        function switchSpecificAccount() {
-            const selectElement = document.getElementById('accountIndexSelect');
-            const targetIndex = selectElement.value;
-            if (!confirm(\`确定要切换到账号 #\${targetIndex} 吗？这会重置浏览器会话。\`)) {
-                return;
-            }
-            fetch('/api/switch-account', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ targetIndex: parseInt(targetIndex, 10) })
-            })
-            .then(res => res.text()).then(data => { alert(data); updateContent(); })
-            .catch(err => { 
-                if (err.message.includes('Load failed') || err.message.includes('NetworkError')) {
-                    alert('⚠️ 浏览器启动较慢，操作仍在后台进行中。\n\n请不要重复点击。');
-                } else {
-                    alert('❌ 操作失败: ' + err); 
-                }
-                updateContent(); 
-            });
-        }
-
-        function toggleStreamingMode() { 
-            const newMode = prompt('请输入新的流模式 (real 或 fake):', '${this.config.streamingMode
-                }');
-            if (newMode === 'fake' || newMode === 'real') {
-                fetch('/api/set-mode', { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ mode: newMode }) 
-                })
-                .then(res => res.text()).then(data => { alert(data); updateContent(); })
-                .catch(err => alert('设置失败: ' + err));
-            } else if (newMode !== null) { 
-                alert('无效的模式！请只输入 "real" 或 "fake"。'); 
-            } 
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            updateContent(); 
-            setInterval(updateContent, 5000);
-        });
-        </script>
-    </body>
-    </html>
-    `;
-            res.status(200).send(statusHtml);
+            // 直接返回 admin.html 文件内容
+            res.sendFile(path.join(__dirname, 'public', 'admin.html'));
         });
 
         // API 路由和代理主逻辑保持不变...
@@ -2776,6 +2579,70 @@ class ProxyServerSystem extends EventEmitter {
                 res.status(200).send(`流式模式已切换为: ${this.streamingMode}`);
             } else {
                 res.status(400).send('无效模式. 请用 "fake" 或 "real".');
+            }
+        });
+
+        // Quick Switch Account API
+        app.post("/api/quick-switch", isAuthenticated, async (req, res) => {
+            try {
+                const { targetIndex } = req.body;
+
+                if (targetIndex === undefined || targetIndex === null) {
+                    return res.status(400).send('缺少目标账号索引');
+                }
+
+                this.logger.info(
+                    `[WebUI] 收到快速切换到账号 #${targetIndex} 的请求...`
+                );
+
+                const result = await this.requestHandler._switchToSpecificAuth(targetIndex);
+
+                if (result.success) {
+                    this.logger.info(
+                        `[WebUI] 快速切换成功，已激活账号 #${result.newIndex}`
+                    );
+                    res.status(200).send(`快速切换成功！已激活账号 #${result.newIndex}。`);
+                } else {
+                    this.logger.warn(
+                        `[WebUI] 快速切换失败: ${result.reason}`
+                    );
+                    res.status(400).send(result.reason);
+                }
+            } catch (error) {
+                this.logger.error(
+                    `[WebUI] 快速切换账号时发生错误: ${error.message}`
+                );
+                res.status(500).send(`快速切换失败: ${error.message}`);
+            }
+        });
+
+        // Toggle Stream Mode API
+        app.post("/api/toggle-stream-mode", isAuthenticated, (req, res) => {
+            try {
+                const { mode } = req.body;
+
+                if (!mode || (mode !== "fake" && mode !== "real")) {
+                    return res.status(400).send('无效模式. 请使用 "fake" 或 "real".');
+                }
+
+                const oldMode = this.streamingMode;
+                this.streamingMode = mode;
+
+                this.logger.info(
+                    `[WebUI] 流式模式已由 ${oldMode} 切换为: ${this.streamingMode}`
+                );
+
+                res.status(200).json({
+                    success: true,
+                    oldMode: oldMode,
+                    newMode: this.streamingMode,
+                    message: `流式模式已从 ${oldMode} 切换为 ${this.streamingMode}`
+                });
+            } catch (error) {
+                this.logger.error(
+                    `[WebUI] 切换流模式时发生错误: ${error.message}`
+                );
+                res.status(500).send(`切换流模式失败: ${error.message}`);
             }
         });
         app.use(this._createAuthMiddleware());
@@ -2898,14 +2765,27 @@ class ProxyServerSystem extends EventEmitter {
         router.delete("/configs/:index", (req, res) => {
             try {
                 const index = parseInt(req.params.index, 10);
+                // DEBUG: 添加删除操作的调试日志
+                this.logger.info(`[DEBUG] 收到删除请求，目标索引: ${index}`);
+                this.logger.info(`[DEBUG] 当前所有初始索引: [${this.authSource.initialIndices.join(', ')}]`);
+                this.logger.info(`[DEBUG] 当前所有可用索引: [${this.authSource.availableIndices.join(', ')}]`);
+
                 if (!this.authSource.initialIndices.includes(index)) {
+                    this.logger.error(`[DEBUG] 索引 ${index} 不在初始索引列表中，删除失败`);
                     return res.status(404).send("配置不存在。");
                 }
                 const filePath = path.join(authDir, `auth-${index}.json`);
+                this.logger.info(`[DEBUG] 计划删除文件路径: ${filePath}`);
+                this.logger.info(`[DEBUG] 文件是否存在: ${fs.existsSync(filePath)}`);
+
                 if (fs.existsSync(filePath)) {
                     fs.unlinkSync(filePath);
+                    this.logger.info(`[DEBUG] 文件 ${filePath} 删除成功`);
+                } else {
+                    this.logger.warn(`[DEBUG] 文件 ${filePath} 不存在，但继续执行`);
                 }
                 this.authSource.rescanSources();
+                this.logger.info(`[DEBUG] 重新扫描后的可用索引: [${this.authSource.availableIndices.join(', ')}]`);
                 res.json({ success: true, index: index });
             } catch (error) {
                 this.logger.error(`[API] 删除 auth 配置 #${req.params.index} 失败: ${error.message}`);
