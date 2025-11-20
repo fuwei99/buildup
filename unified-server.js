@@ -2898,14 +2898,27 @@ class ProxyServerSystem extends EventEmitter {
         router.delete("/configs/:index", (req, res) => {
             try {
                 const index = parseInt(req.params.index, 10);
+                // DEBUG: 添加删除操作的调试日志
+                this.logger.info(`[DEBUG] 收到删除请求，目标索引: ${index}`);
+                this.logger.info(`[DEBUG] 当前所有初始索引: [${this.authSource.initialIndices.join(', ')}]`);
+                this.logger.info(`[DEBUG] 当前所有可用索引: [${this.authSource.availableIndices.join(', ')}]`);
+
                 if (!this.authSource.initialIndices.includes(index)) {
+                    this.logger.error(`[DEBUG] 索引 ${index} 不在初始索引列表中，删除失败`);
                     return res.status(404).send("配置不存在。");
                 }
                 const filePath = path.join(authDir, `auth-${index}.json`);
+                this.logger.info(`[DEBUG] 计划删除文件路径: ${filePath}`);
+                this.logger.info(`[DEBUG] 文件是否存在: ${fs.existsSync(filePath)}`);
+
                 if (fs.existsSync(filePath)) {
                     fs.unlinkSync(filePath);
+                    this.logger.info(`[DEBUG] 文件 ${filePath} 删除成功`);
+                } else {
+                    this.logger.warn(`[DEBUG] 文件 ${filePath} 不存在，但继续执行`);
                 }
                 this.authSource.rescanSources();
+                this.logger.info(`[DEBUG] 重新扫描后的可用索引: [${this.authSource.availableIndices.join(', ')}]`);
                 res.json({ success: true, index: index });
             } catch (error) {
                 this.logger.error(`[API] 删除 auth 配置 #${req.params.index} 失败: ${error.message}`);
