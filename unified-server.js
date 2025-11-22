@@ -1138,9 +1138,6 @@ class RequestHandler {
     async processOpenAIRequest(req, res) {
         const requestId = this._generateRequestId();
 
-        // [Debug] 打印请求的关键参数，辅助排查流式判断问题
-        this.logger.info(`[Request] 收到 OpenAI 请求 [${requestId}] - Model: ${req.body.model}, Stream: ${req.body.stream} (Type: ${typeof req.body.stream})`);
-
         // 检查并切换到可用账号
         const availableAuthIndex = this._findNextAvailableAuthIndex(this.currentAuthIndex);
         if (availableAuthIndex === null) {
@@ -1157,8 +1154,7 @@ class RequestHandler {
             }
         }
 
-        // [修复] 兼容字符串类型的 "true"，防止误判
-        const isOpenAIStream = req.body.stream === true || String(req.body.stream) === 'true';
+        let isOpenAIStream = req.body.stream === true; // 改为 let
         let model = req.body.model || "gemini-1.5-pro-latest";
         let streamingModeForBrowser = isOpenAIStream ? "real" : "fakeflow";
         let isFakeMode = false;
@@ -1171,9 +1167,17 @@ class RequestHandler {
             isFakeMode = true;
             realModel = model.substring(9);
             streamingModeForBrowser = "fakeflow";
-            this.logger.info(
-                `[Adapter] 检测到 'Fakeflow/' 前缀，模型切换为 '${realModel}'，模式设置为 'fakeflow'。`
-            );
+            // [核心修复] 强制将假流请求识别为流式，以触发心跳逻辑
+            if (!isOpenAIStream) {
+                isOpenAIStream = true;
+                this.logger.info(
+                    `[Adapter] 检测到 'Fakeflow/' 前缀且 stream:false，强制开启流式处理以启用心跳。`
+                );
+            } else {
+                this.logger.info(
+                    `[Adapter] 检测到 'Fakeflow/' 前缀，模型切换为 '${realModel}'，模式设置为 'fakeflow'。`
+                );
+            }
         }
 
         if (realModel.includes("-nothinking")) {
@@ -1232,6 +1236,136 @@ class RequestHandler {
 
         const messageQueue = this.connectionRegistry.createMessageQueue(requestId);
 
+        // =================================================================================
+        // [核心修复] 针对 Fakeflow (伪流式) 的特殊处理路径
+        // 目标：立即建立连接并发送心跳，防止客户端在等待上游响应时超时
+        // =================================================================================
+        if (isFakeMode) {
+            this.logger.info(`[Adapter] 🚀 针对 Fakeflow 请求，立即响应 200 OK 并启动心跳...`);
+
+            // 1. 立即发送响应头
+            res.status(200).set({
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive",
+            });
+
+            // 2. 启动异步心跳保活循环 (独立运行)
+            const keepAliveLoop = async () => {
+                this.logger.info(`[Heartbeat] 💓 [${requestId}] 启动心跳保活循环 (间隔: 3s)...`);
+                let hbCount = 0;
+                try {
+                    while (!res.writableEnded) {
+                        // 等待 3 秒 (比之前的 10 秒更频繁，以防某些客户端超时时间很短)
+                        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+                        if (!res.writableEnded) {
+                            hbCount++;
+                            // 发送 SSE 注释作为心跳
+                            res.write(": \n\n");
+                            // 降低日志频率，每 5 次心跳记录一次，避免刷屏
+                            if (hbCount % 5 === 0 || hbCount === 1) {
+                                this.logger.info(`[Heartbeat] 💓 [${requestId}] 已发送第 ${hbCount} 次心跳 (内容: ": \\n\\n")。`);
+                            }
+                        }
+                    }
+                } catch (hbError) {
+                    this.logger.error(`[Heartbeat] ❌ [${requestId}] 心跳循环发生错误: ${hbError.message}`);
+                }
+                this.logger.info(`[Heartbeat] 🛑 [${requestId}] 响应流已结束，心跳循环停止。共发送 ${hbCount} 次心跳。`);
+            };
+            keepAliveLoop(); // 不 await，让其在后台独立运行
+
+            try {
+                // 3. 发送请求给浏览器
+                this._forwardRequest(proxyRequest);
+
+                // 4. 等待并处理响应
+                // 注意：这里不需要像之前那样先 dequeue 一个 initialMessage 再判断 error
+                // 因为我们已经响应了 200 OK，如果出错，我们需要以 SSE error 的形式发送给客户端
+
+                let fullBody = "";
+                while (true) {
+                    // 设置较长的超时时间，因为我们有心跳保活
+                    const message = await messageQueue.dequeue(600000); // 10分钟超时
+
+                    if (message.event_type === "error") {
+                        this.logger.error(`[Adapter] 收到来自浏览器的错误: ${message.message}`);
+                        // 以 SSE 格式发送错误
+                        const errorPayload = {
+                            error: {
+                                message: message.message || "Unknown error from upstream",
+                                type: "upstream_error",
+                                code: message.status || 500
+                            }
+                        };
+                        res.write(`data: ${JSON.stringify(errorPayload)}\n\n`);
+                        // 触发切换逻辑 (虽然对当前请求可能救不回来了，但为了后续请求)
+                        await this._handleRequestFailureAndSwitch(message, res);
+                        break;
+                    }
+
+                    if (message.type === "STREAM_END") break;
+
+                    if (message.event_type === "chunk" && message.data) {
+                        fullBody += message.data;
+                    }
+                }
+
+                // 如果没有收集到 body 且没有报错 (例如直接 STREAM_END)，则可能是空响应
+                if (fullBody) {
+                    // 5. 转换并发送数据
+                    const translatedChunk = this._translateGoogleToOpenAIStream(
+                        `data: ${fullBody}`,
+                        model
+                    );
+
+                    if (translatedChunk) {
+                        res.write(translatedChunk);
+                    }
+
+                    // 记录成功日志
+                    try {
+                        const fullResponse = JSON.parse(fullBody);
+                        const finishReason = fullResponse.candidates?.[0]?.finishReason || "UNKNOWN";
+                        this.logger.info(`✅ [Request] OpenAI伪流式响应结束，原因: ${finishReason}，请求ID: ${requestId}`);
+
+                        // 成功，重置失败计数
+                        this.authSource.incrementUsage(this.currentAuthIndex);
+                        if (this.failureCount > 0) {
+                            this.failureCount = 0;
+                        }
+                    } catch (e) { }
+                }
+
+                // 6. 发送结束信号
+                res.write("data: [DONE]\n\n");
+
+            } catch (error) {
+                this.logger.error(`[Adapter] 处理 Fakeflow 请求时发生错误: ${error.message}`);
+                // 尝试发送错误信息给客户端
+                if (!res.writableEnded) {
+                    const errorPayload = {
+                        error: {
+                            message: `Internal Server Error: ${error.message}`,
+                            type: "internal_error",
+                            code: 500
+                        }
+                    };
+                    res.write(`data: ${JSON.stringify(errorPayload)}\n\n`);
+                }
+            } finally {
+                this.connectionRegistry.removeMessageQueue(requestId);
+                if (!res.writableEnded) {
+                    res.end();
+                }
+            }
+            return; // Fakeflow 处理完毕，退出函数
+        }
+
+        // =================================================================================
+        // 原有的处理逻辑 (用于非 Fakeflow 的真流式和非流式)
+        // =================================================================================
         try {
             // [新增-步骤1] 统一发送请求并等待初始响应
             this._forwardRequest(proxyRequest);
@@ -1279,7 +1413,6 @@ class RequestHandler {
 
             // [逻辑微调] 将原有代码放入 else 块中，并根据流式/非流式分别处理
             if (isOpenAIStream) {
-                this.logger.info(`[Adapter] [${requestId}] 判定为流式请求 (stream=true)，准备处理...`);
                 // --- 处理流式响应 ---
                 res.status(200).set({
                     "Content-Type": "text/event-stream",
@@ -1287,110 +1420,44 @@ class RequestHandler {
                     Connection: "keep-alive",
                 });
 
-                // 如果是伪流模式，则一次性读取，然后模拟流式返回
-                if (isFakeMode) {
-                    this.logger.info("[Adapter] 进入OpenAI伪流式响应处理...");
-
-                    // [新增] 启动异步心跳保活循环，独立于主线程运行
-                    const keepAliveLoop = async () => {
-                        this.logger.info(`[Heartbeat] 💓 [${requestId}] 启动心跳保活循环 (间隔: 10s)...`);
-                        let hbCount = 0;
-                        try {
-                            while (!res.writableEnded) {
-                                // 等待 10 秒
-                                await new Promise((resolve) => setTimeout(resolve, 10000));
-
-                                if (!res.writableEnded) {
-                                    hbCount++;
-                                    this.logger.info(`[Heartbeat] 💓 [${requestId}] 准备发送第 ${hbCount} 次心跳...`);
-                                    // 发送 SSE 注释作为心跳 (符合 "发送空格/空内容" 的意图且不破坏 SSE 格式)
-                                    res.write(": \n\n");
-                                    this.logger.info(`[Heartbeat] 💓 [${requestId}] 第 ${hbCount} 次心跳已发送 (内容: ": \\n\\n")。`);
-                                }
-                            }
-                        } catch (hbError) {
-                            this.logger.error(`[Heartbeat] ❌ [${requestId}] 心跳循环发生错误: ${hbError.message}`);
-                        }
-                        this.logger.info(`[Heartbeat] 🛑 [${requestId}] 响应流已结束，心跳循环停止。共发送 ${hbCount} 次心跳。`);
-                    };
-                    keepAliveLoop(); // 不 await，让其在后台独立运行
-
-                    let fullBody = "";
-                    while (true) {
-                        const message = await messageQueue.dequeue(300000);
-                        if (message.type === "STREAM_END") break;
-                        if (message.event_type === "chunk" && message.data) {
-                            fullBody += message.data;
-                        }
+                // 注意：isFakeMode 的逻辑已经移到上面单独处理了，这里只剩下真流式
+                // --- 处理真流式响应 ---
+                this.logger.info("[Adapter] 进入OpenAI真流式响应处理...");
+                let lastGoogleChunk = "";
+                while (true) {
+                    const message = await messageQueue.dequeue(300000); // 5分钟超时
+                    if (message.type === "STREAM_END") {
+                        res.write("data: [DONE]\n\n");
+                        break;
                     }
-
-                    // 将完整的Google响应体转换为单个OpenAI流块
-                    // 我们需要给它加上 "data: " 前缀，因为翻译函数期望的是原始SSE块
-                    const translatedChunk = this._translateGoogleToOpenAIStream(
-                        `data: ${fullBody}`,
-                        model
-                    );
-
-                    if (translatedChunk) {
-                        res.write(translatedChunk);
-                    }
-                    res.write("data: [DONE]\n\n");
-
-                    try {
-                        const fullResponse = JSON.parse(fullBody);
-                        const finishReason =
-                            fullResponse.candidates?.[0]?.finishReason || "UNKNOWN";
-                        this.logger.info(
-                            `✅ [Request] OpenAI伪流式响应结束，原因: ${finishReason}，请求ID: ${requestId}`
+                    if (message.data) {
+                        const translatedChunk = this._translateGoogleToOpenAIStream(
+                            message.data,
+                            model
                         );
-                    } catch (e) { }
-                } else {
-                    // --- 处理真流式响应 ---
-                    this.logger.info("[Adapter] 进入OpenAI真流式响应处理...");
-                    let lastGoogleChunk = "";
-                    while (true) {
-                        const message = await messageQueue.dequeue(300000); // 5分钟超时
-                        if (message.type === "STREAM_END") {
-                            res.write("data: [DONE]\n\n");
-                            break;
+                        if (translatedChunk) {
+                            res.write(translatedChunk);
                         }
-                        if (message.data) {
-                            const translatedChunk = this._translateGoogleToOpenAIStream(
-                                message.data,
-                                model
+                        lastGoogleChunk = message.data;
+                    }
+                }
+                // 记录结束原因
+                try {
+                    if (lastGoogleChunk.startsWith("data: ")) {
+                        const jsonString = lastGoogleChunk.substring(6).trim();
+                        if (jsonString) {
+                            const lastResponse = JSON.parse(jsonString);
+                            const finishReason =
+                                lastResponse.candidates?.[0]?.finishReason || "UNKNOWN";
+                            this.logger.info(
+                                `✅ [Request] OpenAI真流式响应结束，原因: ${finishReason}，请求ID: ${requestId}`
                             );
-                            if (translatedChunk) {
-                                res.write(translatedChunk);
-                            }
-                            lastGoogleChunk = message.data;
                         }
                     }
-                    // 记录结束原因
-                    try {
-                        if (lastGoogleChunk.startsWith("data: ")) {
-                            const jsonString = lastGoogleChunk.substring(6).trim();
-                            if (jsonString) {
-                                const lastResponse = JSON.parse(jsonString);
-                                const finishReason =
-                                    lastResponse.candidates?.[0]?.finishReason || "UNKNOWN";
-                                this.logger.info(
-                                    `✅ [Request] OpenAI真流式响应结束，原因: ${finishReason}，请求ID: ${requestId}`
-                                );
-                            }
-                        }
-                    } catch (e) {
-                        // 解析失败则不记录
-                    }
+                } catch (e) {
+                    // 解析失败则不记录
                 }
             } else {
-                this.logger.info(`[Adapter] [${requestId}] 判定为非流式请求 (stream=false)，进入普通等待模式...`);
-
-                if (isFakeMode) {
-                    this.logger.warn(`[Adapter] ⚠️⚠️⚠️ 警告 [${requestId}]: 检测到 Fakeflow 模式但未开启流式 (stream: false)。`);
-                    this.logger.warn(`[Adapter] ⚠️⚠️⚠️ Fakeflow 模式响应时间较长，非流式请求极易导致客户端超时 (Timeout)。`);
-                    this.logger.warn(`[Adapter] ⚠️⚠️⚠️ 强烈建议在客户端开启 stream: true 以启用心跳保活机制。`);
-                }
-
                 // --- 处理非流式响应 ---
                 // initialMessage 是 headers，同样不需要。现在等待body。
                 // [修正] 非流式响应也可能被分块，需要循环接收直到结束
