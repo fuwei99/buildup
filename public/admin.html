@@ -274,6 +274,16 @@
                     </div>
                 </div>
                 <div class="toolbar-right">
+                    <button id="settings-btn" class="btn btn-secondary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path
+                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                            </path>
+                        </svg>
+                        系统设置
+                    </button>
                     <button id="batch-limit-btn" class="btn btn-secondary">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2">
@@ -282,7 +292,8 @@
                         批量设置限制
                     </button>
                     <button id="upload-zip-btn" class="btn btn-secondary">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="17 8 12 3 7 8"></polyline>
                             <line x1="12" y1="3" x2="12" y2="15"></line>
@@ -290,7 +301,8 @@
                         上传配置(ZIP)
                     </button>
                     <button id="download-all-btn" class="btn btn-secondary">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="7 10 12 15 17 10"></polyline>
                             <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -419,6 +431,96 @@
 
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- System Config Modal -->
+    <dialog id="system-config-modal" class="modal modal-large">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">系统配置</h2>
+                <button class="modal-close" id="system-config-modal-close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="system-config-form" class="config-form">
+                    <div class="form-section">
+                        <h3>基础设置 (需要重启)</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="config-httpPort">HTTP 端口</label>
+                                <input type="number" id="config-httpPort" name="httpPort" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="config-wsPort">WebSocket 端口</label>
+                                <input type="number" id="config-wsPort" name="wsPort" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="config-host">监听主机 (Host)</label>
+                                <input type="text" id="config-host" name="host" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <h3>运行参数 (即时生效)</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="config-streamingMode">流式模式</label>
+                                <select id="config-streamingMode" name="streamingMode">
+                                    <option value="real">Real (实时流)</option>
+                                    <option value="fakeflow">Fakeflow (伪流)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="config-maxRetries">最大重试次数</label>
+                                <input type="number" id="config-maxRetries" name="maxRetries" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="config-retryDelay">重试延迟 (ms)</label>
+                                <input type="number" id="config-retryDelay" name="retryDelay" min="0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <h3>切换策略 (即时生效)</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="config-failureThreshold">连续失败阈值</label>
+                                <input type="number" id="config-failureThreshold" name="failureThreshold" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="config-switchOnUses">使用次数阈值 (0为不限)</label>
+                                <input type="number" id="config-switchOnUses" name="switchOnUses" min="0">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="config-immediateSwitchStatusCodes">立即切换的状态码 (逗号分隔)</label>
+                            <input type="text" id="config-immediateSwitchStatusCodes" name="immediateSwitchStatusCodes"
+                                placeholder="429, 503">
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <h3>安全设置 (即时生效)</h3>
+                        <div class="form-group">
+                            <label for="config-apiKeys">API Keys (逗号分隔)</label>
+                            <textarea id="config-apiKeys" name="apiKeys" rows="3"
+                                placeholder="sk-..., sk-..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="system-config-cancel-btn">取消</button>
+                        <button type="submit" class="btn btn-primary">保存配置</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </dialog>
 
     <script src="admin.js"></script>
 </body>

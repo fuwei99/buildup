@@ -36,6 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const configModal = document.getElementById('config-modal');
     const batchLimitModal = document.getElementById('batch-limit-modal');
     const logsModal = document.getElementById('logs-modal');
+    const systemConfigModal = document.getElementById('system-config-modal');
     const confirmDialog = document.getElementById('confirm-dialog');
 
     // Modal Buttons
@@ -44,9 +45,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const viewLogsBtn = document.getElementById('view-logs-btn');
     const refreshDataBtn = document.getElementById('refresh-data-btn');
     const refreshLogsBtn = document.getElementById('refresh-logs-button');
-   const uploadZipBtn = document.getElementById('upload-zip-btn');
-   const zipUploadInput = document.getElementById('zip-upload-input');
-   const downloadAllBtn = document.getElementById('download-all-btn');
+    const uploadZipBtn = document.getElementById('upload-zip-btn');
+    const zipUploadInput = document.getElementById('zip-upload-input');
+    const downloadAllBtn = document.getElementById('download-all-btn');
+    const settingsBtn = document.getElementById('settings-btn');
 
     // Modal Close Buttons
     const modalClose = document.getElementById('modal-close');
@@ -55,11 +57,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancelBtn = document.getElementById('cancel-btn');
     const batchLimitCancelBtn = document.getElementById('batch-limit-cancel-btn');
     const confirmCancel = document.getElementById('confirm-cancel');
+    const systemConfigModalClose = document.getElementById('system-config-modal-close');
+    const systemConfigCancelBtn = document.getElementById('system-config-cancel-btn');
 
     // Form Elements
     const batchLimitForm = document.getElementById('batch-limit-form');
     const batchLimitInput = document.getElementById('batch-limit-input');
     const logsContent = document.getElementById('logs-content');
+    const systemConfigForm = document.getElementById('system-config-form');
 
     // Stats Elements
     const totalConfigsEl = document.getElementById('total-configs');
@@ -364,10 +369,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const configs = await response.json();
             currentConfigs = configs;
 
-            // DEBUG: 添加调试日志
-            console.log('[DEBUG] 获取到的配置数组:', configs.map(c => ({ index: c.index, fileName: `auth-${c.index}.json` })));
-            console.log('[DEBUG] 配置数组长度:', configs.length);
-
             // Update stats
             updateStats();
 
@@ -388,14 +389,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             filteredConfigs.forEach((config, index) => {
                 const originalIndex = configs.indexOf(config);
-                // DEBUG: 添加详细的索引映射日志
-                console.log('[DEBUG] 渲染配置项:', {
-                    显示位置: index + 1,
-                    数组索引: index,
-                    原始索引: originalIndex,
-                    配置索引: config.index,
-                    对应文件: `auth-${config.index}.json`
-                });
                 const usageStatus = getUsageStatus(config.currentUsage, config.usageLimit);
 
                 const card = document.createElement('div');
@@ -481,6 +474,76 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // System Config Functions
+    const loadSystemConfig = async () => {
+        try {
+            const response = await fetch('/api/config');
+            if (!response.ok) throw new Error('获取系统配置失败');
+            const config = await response.json();
+
+            // Populate form fields
+            document.getElementById('config-httpPort').value = config.httpPort;
+            document.getElementById('config-wsPort').value = config.wsPort;
+            document.getElementById('config-host').value = config.host;
+            document.getElementById('config-streamingMode').value = config.streamingMode;
+            document.getElementById('config-maxRetries').value = config.maxRetries;
+            document.getElementById('config-retryDelay').value = config.retryDelay;
+            document.getElementById('config-failureThreshold').value = config.failureThreshold;
+            document.getElementById('config-switchOnUses').value = config.switchOnUses;
+
+            if (Array.isArray(config.immediateSwitchStatusCodes)) {
+                document.getElementById('config-immediateSwitchStatusCodes').value = config.immediateSwitchStatusCodes.join(', ');
+            }
+
+            if (Array.isArray(config.apiKeys)) {
+                document.getElementById('config-apiKeys').value = config.apiKeys.join(', ');
+            }
+
+            showModal(systemConfigModal);
+        } catch (error) {
+            showToast(`加载配置失败: ${error.message}`, 'error');
+        }
+    };
+
+    const saveSystemConfig = async (e) => {
+        e.preventDefault();
+        const formData = new FormData(systemConfigForm);
+        const configData = Object.fromEntries(formData.entries());
+
+        // Convert types
+        configData.httpPort = parseInt(configData.httpPort, 10);
+        configData.wsPort = parseInt(configData.wsPort, 10);
+        configData.maxRetries = parseInt(configData.maxRetries, 10);
+        configData.retryDelay = parseInt(configData.retryDelay, 10);
+        configData.failureThreshold = parseInt(configData.failureThreshold, 10);
+        configData.switchOnUses = parseInt(configData.switchOnUses, 10);
+
+        try {
+            const response = await fetch('/api/config', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(configData)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '保存失败');
+            }
+
+            const result = await response.json();
+            showToast(result.message, 'success');
+
+            if (result.message.includes('重启')) {
+                showToast('部分设置需要重启服务器才能生效', 'warning', '注意');
+            }
+
+            hideModal(systemConfigModal);
+
+        } catch (error) {
+            showToast(`保存配置失败: ${error.message}`, 'error');
+        }
+    };
+
     // Event Listeners
 
     // Auto Refresh Controls
@@ -537,78 +600,76 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh Logs Button
     refreshLogsBtn.addEventListener('click', fetchLogs);
 
-   // Download All Button
-   downloadAllBtn.addEventListener('click', async () => {
-       showToast('正在准备下载...', 'info');
-       try {
-           const response = await fetch('/api/auth/download-all');
-           if (!response.ok) {
-               const errorData = await response.json();
-               throw new Error(errorData.message || '下载失败');
-           }
-           const blob = await response.blob();
-           const url = window.URL.createObjectURL(blob);
-           const a = document.createElement('a');
-           a.style.display = 'none';
-           a.href = url;
-           // 从Content-Disposition头获取文件名，或提供一个默认名
-           const disposition = response.headers.get('Content-Disposition');
-           let filename = 'auth_configs.zip';
-           if (disposition && disposition.indexOf('attachment') !== -1) {
-               const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-               const matches = filenameRegex.exec(disposition);
-               if (matches != null && matches[1]) {
-                   filename = matches[1].replace(/['"]/g, '');
-               }
-           }
-           a.download = filename;
-           document.body.appendChild(a);
-           a.click();
-           window.URL.revokeObjectURL(url);
-           a.remove();
-           showToast('下载成功！', 'success');
-       } catch (error) {
-           showToast(`下载失败: ${error.message}`, 'error');
-       }
-   });
+    // Download All Button
+    downloadAllBtn.addEventListener('click', async () => {
+        showToast('正在准备下载...', 'info');
+        try {
+            const response = await fetch('/api/auth/download-all');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '下载失败');
+            }
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            const disposition = response.headers.get('Content-Disposition');
+            let filename = 'auth_configs.zip';
+            if (disposition && disposition.indexOf('attachment') !== -1) {
+                const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                const matches = filenameRegex.exec(disposition);
+                if (matches != null && matches[1]) {
+                    filename = matches[1].replace(/['"]/g, '');
+                }
+            }
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            a.remove();
+            showToast('下载成功！', 'success');
+        } catch (error) {
+            showToast(`下载失败: ${error.message}`, 'error');
+        }
+    });
 
-   // Upload Zip Button
-   uploadZipBtn.addEventListener('click', () => {
-       zipUploadInput.click();
-   });
+    // Upload Zip Button
+    uploadZipBtn.addEventListener('click', () => {
+        zipUploadInput.click();
+    });
 
-   zipUploadInput.addEventListener('change', async (e) => {
-       const file = e.target.files[0];
-       if (!file) return;
+    zipUploadInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
 
-       const formData = new FormData();
-       formData.append('zipfile', file);
+        const formData = new FormData();
+        formData.append('zipfile', file);
 
-       showToast('正在上传并处理ZIP文件...', 'info');
+        showToast('正在上传并处理ZIP文件...', 'info');
 
-       try {
-           const response = await fetch('/api/auth/upload-zip', {
-               method: 'POST',
-               body: formData,
-           });
+        try {
+            const response = await fetch('/api/auth/upload-zip', {
+                method: 'POST',
+                body: formData,
+            });
 
-           const result = await response.json();
+            const result = await response.json();
 
-           if (!response.ok) {
-               throw new Error(result.message || '上传失败');
-           }
+            if (!response.ok) {
+                throw new Error(result.message || '上传失败');
+            }
 
-           showToast(result.message, 'success');
-           await renderConfigs();
-           await updateAccountOptions();
+            showToast(result.message, 'success');
+            await renderConfigs();
+            await updateAccountOptions();
 
-       } catch (error) {
-           showToast(`上传失败: ${error.message}`, 'error');
-       } finally {
-           // Reset the input so the same file can be uploaded again
-           e.target.value = '';
-       }
-   });
+        } catch (error) {
+            showToast(`上传失败: ${error.message}`, 'error');
+        } finally {
+            e.target.value = '';
+        }
+    });
 
     // Search Input
     searchInput.addEventListener('input', (e) => {
@@ -622,9 +683,11 @@ document.addEventListener('DOMContentLoaded', () => {
     cancelBtn.addEventListener('click', () => hideModal(configModal));
     batchLimitCancelBtn.addEventListener('click', () => hideModal(batchLimitModal));
     confirmCancel.addEventListener('click', () => hideModal(confirmDialog));
+    systemConfigModalClose.addEventListener('click', () => hideModal(systemConfigModal));
+    systemConfigCancelBtn.addEventListener('click', () => hideModal(systemConfigModal));
 
     // Close modals when clicking outside
-    [configModal, batchLimitModal, logsModal, confirmDialog].forEach(modal => {
+    [configModal, batchLimitModal, logsModal, confirmDialog, systemConfigModal].forEach(modal => {
         modal.addEventListener('click', (e) => {
             if (e.target === modal) {
                 hideModal(modal);
@@ -643,14 +706,12 @@ document.addEventListener('DOMContentLoaded', () => {
             let response;
 
             if (editIndex) {
-                // Edit mode
                 response = await fetch(`/api/auth/configs/${editIndex}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(configData),
                 });
             } else {
-                // Add mode
                 response = await fetch('/api/auth/configs', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -705,6 +766,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // System Config Event Listeners
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', loadSystemConfig);
+    }
+    systemConfigForm.addEventListener('submit', saveSystemConfig);
+
     // Config List Event Delegation
     configList.addEventListener('click', async (e) => {
         const target = e.target.closest('button');
@@ -715,28 +782,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Delete Config
         if (target.classList.contains('delete-config-btn')) {
-            // DEBUG: 添加删除操作的调试日志
-            const targetConfig = currentConfigs.find(c => c.index == configIndex);
-            console.log('[DEBUG] 删除操作触发:', {
-                点击的按钮配置索引: configIndex,
-                当前配置数组: currentConfigs.map(c => ({ index: c.index, fileName: `auth-${c.index}.json` })),
-                要删除的配置: targetConfig ? {
-                    index: targetConfig.index,
-                    fileName: `auth-${targetConfig.index}.json`
-                } : '未找到'
-            });
-
             showConfirm(`确定要删除配置 #${configIndex} (auth-${configIndex}.json) 吗？`, async () => {
                 try {
-                    // DEBUG: 记录实际发送的删除请求
-                    console.log('[DEBUG] 发送删除请求到:', `/api/auth/configs/${configIndex}`);
                     const response = await fetch(`/api/auth/configs/${configIndex}`, { method: 'DELETE' });
                     if (!response.ok) throw new Error('删除失败');
-                    console.log('[DEBUG] 删除请求成功');
                     await renderConfigs(searchInput.value);
                     showToast('配置删除成功', 'success');
                 } catch (error) {
-                    console.error('[DEBUG] 删除失败:', error);
                     showToast(`删除配置时出错: ${error.message}`, 'error');
                 }
             });
@@ -831,18 +883,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial load
     const initializeApp = async () => {
         try {
-            // 初始化状态显示
             await updateStatusDisplay();
-
-            // 初始化账号选项
             await updateAccountOptions();
-
-            // 初始化自动刷新
             startAutoRefresh();
-
-            // 加载配置列表
             await renderConfigs();
-
             showToast('管理面板加载完成', 'success');
         } catch (error) {
             console.error('初始化应用失败:', error);

@@ -37,10 +37,12 @@ class AuthSource {
         this._preValidateAndFilter(); // 预检验并过滤掉格式错误的源
 
         if (this.availableIndices.length === 0) {
-            this.logger.error(
-                `[Auth] 致命错误：在 '${this.authMode}' 模式下未找到任何有效的认证源。`
+            this.logger.warn(
+                `[Auth] ⚠️ 在 '${this.authMode}' 模式下未找到任何有效的认证源，服务器将以"等待"模式启动。`
             );
-            throw new Error("No valid authentication sources found.");
+            this.logger.info(
+                "[Auth] 💡 您可以稍后通过 Web UI 添加认证配置。"
+            );
         }
     }
 
@@ -564,6 +566,10 @@ class LoggingService {
     }
     debug(message) {
         console.debug(this._formatMessage("DEBUG", message));
+    }
+
+    getLogs() {
+        return this.logBuffer;
     }
 }
 
@@ -2143,6 +2149,15 @@ class ProxyServerSystem extends EventEmitter {
         if (process.env.API_KEYS) {
             config.apiKeys = process.env.API_KEYS.split(",");
         }
+        if (process.env.PASSWORD) {
+            const passwords = process.env.PASSWORD.split(",");
+            if (Array.isArray(config.apiKeys)) {
+                config.apiKeys = config.apiKeys.concat(passwords);
+            } else {
+                config.apiKeys = passwords;
+            }
+            this.logger.info("[System] 检测到 PASSWORD 环境变量，已将其添加到 API Key 列表中。");
+        }
 
         let rawCodes = process.env.IMMEDIATE_SWITCH_STATUS_CODES;
         let codesSource = "环境变量";
@@ -2310,8 +2325,9 @@ class ProxyServerSystem extends EventEmitter {
                 this.emit("started");
             })();
         } else {
-            // 如果一开始就没有配置，也标记为启动完成，让UI可以工作
-            this.logger.info(`[System] 代理服务器系统启动完成（无浏览器）。`);
+            this.logger.info("[System] 💤 无可用认证源，跳过浏览器启动。");
+            this.logger.info("[System] 📋 请访问管理面板添加认证配置后，浏览器将自动启动。");
+            this.logger.info(`[System] 代理服务器系统启动完成（仅 Web UI 可用）。`);
             this.emit("started");
         }
     }
@@ -2431,43 +2447,50 @@ class ProxyServerSystem extends EventEmitter {
         app.use(express.json({ limit: "100mb" }));
         app.use(express.urlencoded({ extended: true }));
 
-        const sessionSecret =
-            // Section 1 & 2 (核心中间件和登录路由) 保持不变...
-            (this.config.apiKeys && this.config.apiKeys[0]) ||
-            crypto.randomBytes(20).toString("hex");
         app.use(cookieParser());
-        app.use(
-            session({
-                secret: sessionSecret,
-                resave: false,
-                saveUninitialized: true,
-                cookie: { secure: false, maxAge: 86400000 },
-            })
-        );
-        const isAuthenticated = (req, res, next) => {
-            if (req.session.isAuthenticated) {
+
+        // ==========================================================
+        // Section: Admin Panel Authentication (Simple Password)
+        // ==========================================================
+
+        const ADMIN_PASSWORDS = (process.env.PASSWORD || "147258").split(',').map(p => p.trim());
+        const ADMIN_COOKIE_NAME = "admin_auth";
+
+        // Simple Admin Auth Middleware
+        const adminAuthMiddleware = (req, res, next) => {
+            const authCookie = req.cookies[ADMIN_COOKIE_NAME];
+            if (authCookie && ADMIN_PASSWORDS.includes(authCookie)) {
                 return next();
             }
+            // If it's an API request, return 401
+            if (req.path.startsWith("/api/auth")) {
+                return res.status(401).json({ error: "Unauthorized" });
+            }
+            // Otherwise redirect to login page
             res.redirect("/login");
         };
+
         app.get("/login", (req, res) => {
-            if (req.session.isAuthenticated) {
-                return res.redirect("/");
+            const authCookie = req.cookies[ADMIN_COOKIE_NAME];
+            if (authCookie && ADMIN_PASSWORDS.includes(authCookie)) {
+                return res.redirect("/admin");
             }
             const loginHtml = `
-      <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>登录</title>
-      <style>body{display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;background:#f0f2f5}form{background:white;padding:40px;border-radius:10px;box-shadow:0 4px 8px rgba(0,0,0,0.1);text-align:center}input{width:250px;padding:10px;margin-top:10px;border:1px solid #ccc;border-radius:5px}button{width:100%;padding:10px;background-color:#007bff;color:white;border:none;border-radius:5px;margin-top:20px;cursor:pointer}.error{color:red;margin-top:10px}</style>
-      </head><body><form action="/login" method="post"><h2>请输入 API Key</h2>
-      <input type="password" name="apiKey" placeholder="API Key" required autofocus><button type="submit">登录</button>
-      ${req.query.error ? '<p class="error">API Key 错误!</p>' : ""
-                }</form></body></html>`;
+            <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>Admin Login</title>
+            <style>body{display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;background:#f0f2f5}form{background:white;padding:40px;border-radius:10px;box-shadow:0 4px 8px rgba(0,0,0,0.1);text-align:center}input{width:250px;padding:10px;margin-top:10px;border:1px solid #ccc;border-radius:5px}button{width:100%;padding:10px;background-color:#007bff;color:white;border:none;border-radius:5px;margin-top:20px;cursor:pointer}.error{color:red;margin-top:10px}</style>
+            </head><body><form action="/login" method="post"><h2>Admin Login</h2>
+            <input type="password" name="password" placeholder="Password" required autofocus><button type="submit">Login</button>
+            ${req.query.error ? '<p class="error">Invalid Password</p>' : ""}
+            </form></body></html>`;
             res.send(loginHtml);
         });
+
         app.post("/login", (req, res) => {
-            const { apiKey } = req.body;
-            if (apiKey && this.config.apiKeys.includes(apiKey)) {
-                req.session.isAuthenticated = true;
-                res.redirect("/");
+            const { password } = req.body;
+            if (password && ADMIN_PASSWORDS.includes(password)) {
+                // Set a long-lived cookie (1 year)
+                res.cookie(ADMIN_COOKIE_NAME, password, { maxAge: 31536000000, httpOnly: true });
+                res.redirect("/admin");
             } else {
                 res.redirect("/login?error=1");
             }
@@ -2479,37 +2502,35 @@ class ProxyServerSystem extends EventEmitter {
         // ==========================================================
 
         // Route for the admin panel HTML
-        app.get('/admin', isAuthenticated, (req, res) => {
+        app.get('/admin', adminAuthMiddleware, (req, res) => {
             res.sendFile(path.join(__dirname, 'public', 'admin.html'));
         });
 
         // Auth Config Management API
         const authRouter = express.Router();
         this._setupAuthManagementRoutes(authRouter);
-        app.use("/api/auth", isAuthenticated, authRouter);
+        app.use("/api/auth", adminAuthMiddleware, authRouter);
 
-        // 新增: 日志查看 API
-        app.get("/api/logs", isAuthenticated, (req, res) => {
-            try {
-                const logs = this.logger.logBuffer || [];
-                res.json(logs);
-            } catch (error) {
-                this.logger.error(`[API] 获取日志失败: ${error.message}`);
-                res.status(500).send("无法获取日志。");
-            }
-        });
+        // System Config API (Includes /logs)
+        const configRouter = express.Router();
+        this._setupConfigRoutes(configRouter);
+        app.use("/api", adminAuthMiddleware, configRouter);
 
 
         // ==========================================================
         // Section 3: 状态页面 和 API (最终版)
         // ==========================================================
-        app.get("/", isAuthenticated, (req, res) => {
-            // 直接返回 admin.html 文件内容
-            res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+        // ==========================================================
+        // Section 3: 状态页面 和 API (最终版)
+        // ==========================================================
+        app.get("/", (req, res) => {
+            // 根路径重定向到 admin
+            res.redirect('/admin');
         });
 
         // API 路由和代理主逻辑保持不变...
-        app.get("/api/status", isAuthenticated, (req, res) => {
+        // API 路由和代理主逻辑保持不变...
+        app.get("/api/status", adminAuthMiddleware, (req, res) => {
             const { config, requestHandler, authSource, browserManager } = this;
             const initialIndices = authSource.initialIndices || [];
             const invalidIndices = initialIndices.filter(
@@ -2550,7 +2571,7 @@ class ProxyServerSystem extends EventEmitter {
             };
             res.json(data);
         });
-        app.post("/api/switch-account", isAuthenticated, async (req, res) => {
+        app.post("/api/switch-account", adminAuthMiddleware, async (req, res) => {
             try {
                 const { targetIndex } = req.body;
                 if (targetIndex !== undefined && targetIndex !== null) {
@@ -2592,7 +2613,7 @@ class ProxyServerSystem extends EventEmitter {
             }
         });
         // Quick Switch Account API
-        app.post("/api/quick-switch", isAuthenticated, async (req, res) => {
+        app.post("/api/quick-switch", adminAuthMiddleware, async (req, res) => {
             try {
                 const { targetIndex } = req.body;
 
@@ -2730,6 +2751,18 @@ class ProxyServerSystem extends EventEmitter {
                 });
 
                 this.authSource.rescanSources();
+
+                // [新增] 如果之前没有浏览器实例，现在有了配置，则自动启动浏览器
+                if (!this.browserManager.browser && this.authSource.availableIndices.length > 0) {
+                    const firstIndex = this.authSource.availableIndices[0];
+                    this.logger.info(`[API] 检测到首次添加认证配置，正在启动浏览器（账号 #${firstIndex}）...`);
+                    this.browserManager.launchOrSwitchContext(firstIndex).then(() => {
+                        this.logger.info(`[API] ✅ 浏览器已成功启动！代理服务现已可用。`);
+                    }).catch((error) => {
+                        this.logger.error(`[API] ❌ 浏览器启动失败: ${error.message}`);
+                    });
+                }
+
                 res.status(200).json({ success: true, message: `成功添加 ${addedCount} 个新的配置文件。` });
 
             } catch (error) {
@@ -2809,6 +2842,18 @@ class ProxyServerSystem extends EventEmitter {
 
                 fs.writeFileSync(newFilePath, JSON.stringify(req.body, null, 2));
                 this.authSource.rescanSources();
+
+                // [新增] 如果之前没有浏览器实例，现在有了配置，则自动启动浏览器
+                if (!this.browserManager.browser && this.authSource.availableIndices.length > 0) {
+                    const firstIndex = this.authSource.availableIndices[0];
+                    this.logger.info(`[API] 检测到首次添加认证配置，正在启动浏览器（账号 #${firstIndex}）...`);
+                    this.browserManager.launchOrSwitchContext(firstIndex).then(() => {
+                        this.logger.info(`[API] ✅ 浏览器已成功启动！代理服务现已可用。`);
+                    }).catch((error) => {
+                        this.logger.error(`[API] ❌ 浏览器启动失败: ${error.message}`);
+                    });
+                }
+
                 res.status(201).json({ success: true, index: newIndex });
             } catch (error) {
                 this.logger.error(`[API] 创建 auth 配置失败: ${error.message}`);
@@ -2982,8 +3027,61 @@ class ProxyServerSystem extends EventEmitter {
                 res.status(500).send("批量设置 limit 失败。");
             }
         });
+
+        // GET /api/logs - 获取日志
+        router.get("/logs", (req, res) => {
+            res.json({ logs: this.logger.getLogs() });
+        });
+    }
+
+    _setupConfigRoutes(router) {
+        const configPath = path.join(__dirname, "config.json");
+
+        // GET /api/config - 获取当前系统配置
+        router.get("/config", (req, res) => {
+            try {
+                res.json(this.config);
+            } catch (error) {
+                this.logger.error(`[API] 获取系统配置失败: ${error.message}`);
+                res.status(500).send("无法获取系统配置。");
+            }
+        });
+
+        // PUT /api/config - 更新系统配置
+        router.put("/config", (req, res) => {
+            try {
+                const newConfig = req.body;
+
+                if (!newConfig.httpPort || !newConfig.host) {
+                    return res.status(400).json({ message: "HTTP端口和主机地址不能为空。" });
+                }
+
+                // 1. 更新内存中的配置 (仅限动态生效的字段)
+                Object.assign(this.config, newConfig);
+
+                // 特殊处理: 数组类型的字段需要确保格式正确
+                if (typeof newConfig.immediateSwitchStatusCodes === 'string') {
+                    this.config.immediateSwitchStatusCodes = newConfig.immediateSwitchStatusCodes.split(',').map(Number).filter(n => !isNaN(n));
+                }
+                if (typeof newConfig.apiKeys === 'string') {
+                    this.config.apiKeys = newConfig.apiKeys.split(',').map(k => k.trim()).filter(k => k);
+                }
+
+                // 2. 将完整配置写入 config.json
+                fs.writeFileSync(configPath, JSON.stringify(this.config, null, 2));
+
+                this.logger.info(`[API] 系统配置已更新。部分更改可能需要重启服务器才能生效。`);
+
+                res.json({ success: true, message: "配置已更新。", config: this.config });
+
+            } catch (error) {
+                this.logger.error(`[API] 更新系统配置失败: ${error.message}`);
+                res.status(500).send("更新配置失败。");
+            }
+        });
     }
 }
+
 
 // ===================================================================================
 // MAIN INITIALIZATION
