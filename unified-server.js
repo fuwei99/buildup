@@ -1288,12 +1288,25 @@ class RequestHandler {
 
                     // [新增] 启动异步心跳保活循环，独立于主线程运行
                     const keepAliveLoop = async () => {
-                        while (!res.writableEnded) {
-                            await new Promise((resolve) => setTimeout(resolve, 3000));
-                            if (!res.writableEnded) {
-                                res.write(this._getKeepAliveChunk(req));
+                        this.logger.info(`[Heartbeat] 💓 [${requestId}] 启动心跳保活循环 (间隔: 10s)...`);
+                        let hbCount = 0;
+                        try {
+                            while (!res.writableEnded) {
+                                // 等待 10 秒
+                                await new Promise((resolve) => setTimeout(resolve, 10000));
+
+                                if (!res.writableEnded) {
+                                    hbCount++;
+                                    this.logger.info(`[Heartbeat] 💓 [${requestId}] 准备发送第 ${hbCount} 次心跳...`);
+                                    // 发送 SSE 注释作为心跳 (符合 "发送空格/空内容" 的意图且不破坏 SSE 格式)
+                                    res.write(": \n\n");
+                                    this.logger.info(`[Heartbeat] 💓 [${requestId}] 第 ${hbCount} 次心跳已发送 (内容: ": \\n\\n")。`);
+                                }
                             }
+                        } catch (hbError) {
+                            this.logger.error(`[Heartbeat] ❌ [${requestId}] 心跳循环发生错误: ${hbError.message}`);
                         }
+                        this.logger.info(`[Heartbeat] 🛑 [${requestId}] 响应流已结束，心跳循环停止。共发送 ${hbCount} 次心跳。`);
                     };
                     keepAliveLoop(); // 不 await，让其在后台独立运行
 
