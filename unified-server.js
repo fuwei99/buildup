@@ -1285,13 +1285,25 @@ class RequestHandler {
                 // 如果是伪流模式，则一次性读取，然后模拟流式返回
                 if (isFakeMode) {
                     this.logger.info("[Adapter] 进入OpenAI伪流式响应处理...");
-                    let fullBody = "";
-                    while (true) {
-                        const message = await messageQueue.dequeue(300000);
-                        if (message.type === "STREAM_END") break;
-                        if (message.event_type === "chunk" && message.data) {
-                            fullBody += message.data;
+
+                    // [修复] 启动心跳保活机制，防止客户端超时
+                    const connectionMaintainer = setInterval(() => {
+                        if (!res.writableEnded) {
+                            res.write(this._getKeepAliveChunk(req));
                         }
+                    }, 3000);
+
+                    let fullBody = "";
+                    try {
+                        while (true) {
+                            const message = await messageQueue.dequeue(300000);
+                            if (message.type === "STREAM_END") break;
+                            if (message.event_type === "chunk" && message.data) {
+                                fullBody += message.data;
+                            }
+                        }
+                    } finally {
+                        clearInterval(connectionMaintainer);
                     }
 
                     // 将完整的Google响应体转换为单个OpenAI流块
