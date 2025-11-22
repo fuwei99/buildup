@@ -1252,20 +1252,34 @@ class RequestHandler {
 
             // 2. 启动异步心跳保活循环 (独立运行)
             const keepAliveLoop = async () => {
-                this.logger.info(`[Heartbeat] 💓 [${requestId}] 启动心跳保活循环 (间隔: 3s)...`);
+                this.logger.info(`[Heartbeat] 💓 [${requestId}] 启动心跳保活循环 (间隔: 10s)...`);
                 let hbCount = 0;
                 try {
                     while (!res.writableEnded) {
-                        // 等待 3 秒 (比之前的 10 秒更频繁，以防某些客户端超时时间很短)
-                        await new Promise((resolve) => setTimeout(resolve, 3000));
+                        // 等待 10 秒
+                        await new Promise((resolve) => setTimeout(resolve, 10000));
 
                         if (!res.writableEnded) {
                             hbCount++;
-                            // 发送 SSE 注释作为心跳
-                            res.write(": \n\n");
+                            // 发送 SSE 数据块作为心跳 (内容为空格)
+                            const keepAliveChunk = {
+                                id: `chatcmpl-${requestId}`,
+                                object: "chat.completion.chunk",
+                                created: Math.floor(Date.now() / 1000),
+                                model: model,
+                                choices: [
+                                    {
+                                        index: 0,
+                                        delta: { content: " " }, // 发送空格
+                                        finish_reason: null,
+                                    },
+                                ],
+                            };
+                            res.write(`data: ${JSON.stringify(keepAliveChunk)}\n\n`);
+
                             // 降低日志频率，每 5 次心跳记录一次，避免刷屏
                             if (hbCount % 5 === 0 || hbCount === 1) {
-                                this.logger.info(`[Heartbeat] 💓 [${requestId}] 已发送第 ${hbCount} 次心跳 (内容: ": \\n\\n")。`);
+                                this.logger.info(`[Heartbeat] 💓 [${requestId}] 已发送第 ${hbCount} 次心跳 (内容: " ")。`);
                             }
                         }
                     }
