@@ -1138,6 +1138,9 @@ class RequestHandler {
     async processOpenAIRequest(req, res) {
         const requestId = this._generateRequestId();
 
+        // [Debug] 打印请求的关键参数，辅助排查流式判断问题
+        this.logger.info(`[Request] 收到 OpenAI 请求 [${requestId}] - Model: ${req.body.model}, Stream: ${req.body.stream} (Type: ${typeof req.body.stream})`);
+
         // 检查并切换到可用账号
         const availableAuthIndex = this._findNextAvailableAuthIndex(this.currentAuthIndex);
         if (availableAuthIndex === null) {
@@ -1154,7 +1157,8 @@ class RequestHandler {
             }
         }
 
-        const isOpenAIStream = req.body.stream === true;
+        // [修复] 兼容字符串类型的 "true"，防止误判
+        const isOpenAIStream = req.body.stream === true || String(req.body.stream) === 'true';
         let model = req.body.model || "gemini-1.5-pro-latest";
         let streamingModeForBrowser = isOpenAIStream ? "real" : "fakeflow";
         let isFakeMode = false;
@@ -1275,6 +1279,7 @@ class RequestHandler {
 
             // [逻辑微调] 将原有代码放入 else 块中，并根据流式/非流式分别处理
             if (isOpenAIStream) {
+                this.logger.info(`[Adapter] [${requestId}] 判定为流式请求 (stream=true)，准备处理...`);
                 // --- 处理流式响应 ---
                 res.status(200).set({
                     "Content-Type": "text/event-stream",
@@ -1378,6 +1383,14 @@ class RequestHandler {
                     }
                 }
             } else {
+                this.logger.info(`[Adapter] [${requestId}] 判定为非流式请求 (stream=false)，进入普通等待模式...`);
+
+                if (isFakeMode) {
+                    this.logger.warn(`[Adapter] ⚠️⚠️⚠️ 警告 [${requestId}]: 检测到 Fakeflow 模式但未开启流式 (stream: false)。`);
+                    this.logger.warn(`[Adapter] ⚠️⚠️⚠️ Fakeflow 模式响应时间较长，非流式请求极易导致客户端超时 (Timeout)。`);
+                    this.logger.warn(`[Adapter] ⚠️⚠️⚠️ 强烈建议在客户端开启 stream: true 以启用心跳保活机制。`);
+                }
+
                 // --- 处理非流式响应 ---
                 // initialMessage 是 headers，同样不需要。现在等待body。
                 // [修正] 非流式响应也可能被分块，需要循环接收直到结束
