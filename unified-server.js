@@ -1372,19 +1372,20 @@ class RequestHandler {
                     candidate.content &&
                     Array.isArray(candidate.content.parts)
                 ) {
+                    responseContent =
+                        candidate.content.parts.filter((p) => !p.thought && p.text).map((p) => p.text).join("\n") || "";
+
                     const imagePart = candidate.content.parts.find((p) => p.inlineData);
                     if (imagePart) {
                         const image = imagePart.inlineData;
-                        responseContent = `![Generated Image](data:${image.mimeType};base64,${image.data})`;
+                        responseContent += `\n![Generated Image](data:${image.mimeType};base64,${image.data})`;
                         this.logger.info(
-                            "[Adapter] 从 parts.inlineData 中成功解析到图片。"
+                            "[Adapter] 从 parts.inlineData 中成功解析到图片并合并到文本中。"
                         );
-                    } else {
-                        responseContent =
-                            candidate.content.parts.filter((p) => !p.thought).map((p) => p.text).join("\n") || "";
-                        responseReasoning =
-                            candidate.content.parts.filter((p) => p.thought).map((p) => p.text).join("\n") || "";
                     }
+
+                    responseReasoning =
+                        candidate.content.parts.filter((p) => p.thought).map((p) => p.text).join("\n") || "";
                 }
 
                 const openaiResponse = {
@@ -2014,17 +2015,20 @@ class RequestHandler {
         let content = "";
         let reasoning_content = "";
         if (candidate.content && Array.isArray(candidate.content.parts)) {
+            // 1. 提取文本内容
+            content = candidate.content.parts.filter((p) => !p.thought && p.text).map((p) => p.text).join("") || "";
+
+            // 2. 提取图片内容并追加
             const imagePart = candidate.content.parts.find((p) => p.inlineData);
             if (imagePart) {
-                // 发现图片数据，生成完整的 Markdown 字符串
+                // 发现图片数据，生成完整的 Markdown 字符串并追加到 content
                 const image = imagePart.inlineData;
-                content = `![Generated Image](data:${image.mimeType};base64,${image.data})`;
-                this.logger.info("[Adapter] 从流式响应块中成功解析到图片。");
-            } else {
-                // 没有图片，则按原样拼接文本
-                content = candidate.content.parts.filter((p) => !p.thought).map((p) => p.text).join("") || "";
-                reasoning_content = candidate.content.parts.filter((p) => p.thought).map((p) => p.text).join("") || "";
+                content += `\n![Generated Image](data:${image.mimeType};base64,${image.data})`;
+                this.logger.info("[Adapter] 从流式响应块中成功解析到图片并合并到文本中。");
             }
+
+            // 3. 提取思考过程
+            reasoning_content = candidate.content.parts.filter((p) => p.thought).map((p) => p.text).join("") || "";
         }
 
         const finishReason = candidate.finishReason;
@@ -2239,7 +2243,8 @@ class ProxyServerSystem extends EventEmitter {
         const allAvailableIndices = this.authSource.availableIndices;
 
         if (allAvailableIndices.length === 0) {
-            throw new Error("没有任何可用的认证源，无法启动。");
+            // 即使没有认证源，也启动网络服务，以便用户可以通过UI添加
+            this.logger.warn("[System] 警告: 未找到任何认证源。服务器将启动，但代理功能不可用，请通过管理面板添加配置。");
         }
 
         // 2. <<<--- 创建一个优先尝试的启动顺序列表 --->>>
@@ -2248,7 +2253,6 @@ class ProxyServerSystem extends EventEmitter {
             this.logger.info(
                 `[System] 检测到指定启动索引 #${initialAuthIndex}，将优先尝试。`
             );
-            // 将指定索引放到数组第一位，其他索引保持原状
             startupOrder = [
                 initialAuthIndex,
                 ...allAvailableIndices.filter((i) => i !== initialAuthIndex),
@@ -2271,39 +2275,45 @@ class ProxyServerSystem extends EventEmitter {
         await this._startHttpServer();
         await this._startWebSocketServer();
         this.logger.info("[System] ✅ 网络服务已启动，管理面板现在可用。");
-        this.logger.info("[System] 正在后台异步启动浏览器...");
 
-        // 使用一个立即执行的异步函数来处理浏览器启动，不阻塞后续流程
-        (async () => {
-            let isStarted = false;
-            // 3. <<<--- 遍历这个新的、可能被重排过的顺序列表 --->>>
-            for (const index of startupOrder) {
-                try {
-                    this.logger.info(`[System] 尝试使用账号 #${index} 启动浏览器...`);
-                    await this.browserManager.launchOrSwitchContext(index);
+        if (allAvailableIndices.length > 0) {
+            this.logger.info("[System] 正在后台异步启动浏览器...");
+            // 使用一个立即执行的异步函数来处理浏览器启动，不阻塞后续流程
+            (async () => {
+                let isStarted = false;
+                // 3. <<<--- 遍历这个新的、可能被重排过的顺序列表 --->>>
+                for (const index of startupOrder) {
+                    try {
+                        this.logger.info(`[System] 尝试使用账号 #${index} 启动浏览器...`);
+                        await this.browserManager.launchOrSwitchContext(index);
 
-                    isStarted = true;
-                    this.logger.info(`[System] ✅ 使用账号 #${index} 成功启动浏览器！`);
-                    break; // 成功启动，跳出循环
-                } catch (error) {
-                    this.logger.error(
-                        `[System] ❌ 使用账号 #${index} 启动浏览器失败。原因: ${error.message}`
-                    );
-                    // 失败了，循环将继续，尝试下一个账号
+                        isStarted = true;
+                        this.logger.info(`[System] ✅ 使用账号 #${index} 成功启动浏览器！`);
+                        break; // 成功启动，跳出循环
+                    } catch (error) {
+                        this.logger.error(
+                            `[System] ❌ 使用账号 #${index} 启动浏览器失败。原因: ${error.message}`
+                        );
+                        // 失败了，循环将继续，尝试下一个账号
+                    }
                 }
-            }
 
-            if (!isStarted) {
-                // 如果所有账号都尝试失败了
-                this.logger.error(
-                    "❌ [System] 致命错误: 所有认证源均尝试失败，浏览器无法启动。"
-                );
-                // 注意：这里不再抛出错误中断整个服务，因为网络服务已在运行
-            }
+                if (!isStarted) {
+                    // 如果所有账号都尝试失败了
+                    this.logger.error(
+                        "❌ [System] 致命错误: 所有认证源均尝试失败，浏览器无法启动。"
+                    );
+                    // 注意：这里不再抛出错误中断整个服务，因为网络服务已在运行
+                }
 
-            this.logger.info(`[System] 代理服务器系统启动完成。`);
+                this.logger.info(`[System] 代理服务器系统启动完成。`);
+                this.emit("started");
+            })();
+        } else {
+            // 如果一开始就没有配置，也标记为启动完成，让UI可以工作
+            this.logger.info(`[System] 代理服务器系统启动完成（无浏览器）。`);
             this.emit("started");
-        })();
+        }
     }
 
     _createAuthMiddleware() {
