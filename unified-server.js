@@ -1289,7 +1289,7 @@ class RequestHandler {
                     // [修复] 启动心跳保活机制，防止客户端超时
                     const connectionMaintainer = setInterval(() => {
                         if (!res.writableEnded) {
-                            res.write(this._getKeepAliveChunk(req));
+                            res.write(this._getKeepAliveChunk(req, requestId, model));
                         }
                     }, 3000);
 
@@ -1310,7 +1310,8 @@ class RequestHandler {
                     // 我们需要给它加上 "data: " 前缀，因为翻译函数期望的是原始SSE块
                     const translatedChunk = this._translateGoogleToOpenAIStream(
                         `data: ${fullBody}`,
-                        model
+                        model,
+                        requestId
                     );
 
                     if (translatedChunk) {
@@ -1339,7 +1340,8 @@ class RequestHandler {
                         if (message.data) {
                             const translatedChunk = this._translateGoogleToOpenAIStream(
                                 message.data,
-                                model
+                                model,
+                                requestId
                             );
                             if (translatedChunk) {
                                 res.write(translatedChunk);
@@ -1514,7 +1516,7 @@ class RequestHandler {
         });
         const connectionMaintainer = setInterval(() => {
             if (!res.writableEnded) {
-                res.write(this._getKeepAliveChunk(req));
+                res.write(this._getKeepAliveChunk(req, proxyRequest.request_id));
             }
         }, 3000);
 
@@ -1830,14 +1832,20 @@ class RequestHandler {
         }
     }
 
-    _getKeepAliveChunk(req) {
+    _getKeepAliveChunk(req, requestId = null, model = "gpt-4") {
         if (req.path.includes("chat/completions")) {
+            // [优化] 保持 ID 一致性，使用请求的 Model，并对齐假流格式 (增加 role)
+            const id = requestId ? `chatcmpl-${requestId}` : `chatcmpl-${this._generateRequestId()}`;
             const payload = {
-                id: `chatcmpl-${this._generateRequestId()}`,
+                id: id,
                 object: "chat.completion.chunk",
                 created: Math.floor(Date.now() / 1000),
-                model: "gpt-4",
-                choices: [{ index: 0, delta: { content: "" }, finish_reason: null }],
+                model: model,
+                choices: [{
+                    index: 0,
+                    delta: { role: "assistant", content: "" },
+                    finish_reason: null
+                }],
             };
             return `data: ${JSON.stringify(payload)}\n\n`;
         }
@@ -1851,7 +1859,6 @@ class RequestHandler {
                         content: { parts: [{ text: "" }], role: "model" },
                         finishReason: null,
                         index: 0,
-                        safetyRatings: [],
                     },
                 ],
             };
@@ -1987,7 +1994,7 @@ class RequestHandler {
         return googleRequest;
     }
 
-    _translateGoogleToOpenAIStream(googleChunk, modelName = "gemini-pro") {
+    _translateGoogleToOpenAIStream(googleChunk, modelName = "gemini-pro", requestId = null) {
         if (!googleChunk || googleChunk.trim() === "") {
             return null;
         }
@@ -2016,8 +2023,9 @@ class RequestHandler {
                     )}`
                 );
                 const errorText = `[ProxySystem Error] Request blocked due to safety settings. Finish Reason: ${googleResponse.promptFeedback.blockReason}`;
+                const id = requestId ? `chatcmpl-${requestId}` : `chatcmpl-${this._generateRequestId()}`;
                 return `data: ${JSON.stringify({
-                    id: `chatcmpl-${this._generateRequestId()}`,
+                    id: id,
                     object: "chat.completion.chunk",
                     created: Math.floor(Date.now() / 1000),
                     model: modelName,
@@ -2051,8 +2059,9 @@ class RequestHandler {
 
         const finishReason = candidate.finishReason;
 
+        const id = requestId ? `chatcmpl-${requestId}` : `chatcmpl-${this._generateRequestId()}`;
         const openaiResponse = {
-            id: `chatcmpl-${this._generateRequestId()}`,
+            id: id,
             object: "chat.completion.chunk",
             created: Math.floor(Date.now() / 1000),
             model: modelName,
