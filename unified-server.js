@@ -1095,7 +1095,7 @@ class RequestHandler {
                 this.logger.info(
                     `[Request] 客户端启用流式传输 (${proxyRequest.streaming_mode})，进入流式处理模式...`
                 );
-                if (proxyRequest.streaming_mode === "fake") {
+                if (proxyRequest.streaming_mode === "fakeflow") {
                     await this._handlePseudoStreamResponse(
                         proxyRequest,
                         messageQueue,
@@ -1107,8 +1107,8 @@ class RequestHandler {
                 }
             } else {
                 // --- 客户端想要非流式响应 ---
-                // 明确告知浏览器脚本本次应按“一次性JSON”（即fake模式）来处理
-                proxyRequest.streaming_mode = "fake";
+                // 明确告知浏览器脚本本次应按“一次性JSON”（即fakeflow模式）来处理
+                proxyRequest.streaming_mode = "fakeflow";
                 await this._handleNonStreamResponse(proxyRequest, messageQueue, res);
             }
         } catch (error) {
@@ -1150,19 +1150,19 @@ class RequestHandler {
 
         const isOpenAIStream = req.body.stream === true;
         let model = req.body.model || "gemini-1.5-pro-latest";
-        let streamingModeForBrowser = isOpenAIStream ? "real" : "fake";
+        let streamingModeForBrowser = isOpenAIStream ? "real" : "fakeflow";
         let isFakeMode = false;
 
         // 1. 解析模型名称和后缀，确定 Thinking 策略和 Fake 模式
         let realModel = model;
         let thinkingConfig = { includeThoughts: true }; // 默认开启
 
-        if (model.startsWith("fake-")) {
+        if (model.startsWith("Fakeflow/")) {
             isFakeMode = true;
-            realModel = model.substring(5);
-            streamingModeForBrowser = "fake";
+            realModel = model.substring(9);
+            streamingModeForBrowser = "fakeflow";
             this.logger.info(
-                `[Adapter] 检测到 'fake-' 前缀，模型切换为 '${realModel}'，模式设置为 'fake'。`
+                `[Adapter] 检测到 'Fakeflow/' 前缀，模型切换为 '${realModel}'，模式设置为 'fakeflow'。`
             );
         }
 
@@ -1486,7 +1486,7 @@ class RequestHandler {
 
     async _handlePseudoStreamResponse(proxyRequest, messageQueue, req, res) {
         this.logger.info(
-            "[Request] 客户端启用流式传输 (fake)，进入伪流式处理模式..."
+            `[Request] 客户端启用流式传输 (${proxyRequest.streaming_mode})，进入伪流式处理模式...`
         );
         res.status(200).set({
             "Content-Type": "text/event-stream",
@@ -1494,8 +1494,10 @@ class RequestHandler {
             Connection: "keep-alive",
         });
         const connectionMaintainer = setInterval(() => {
-            if (!res.writableEnded) res.write(": keep-alive\n\n");
-        }, 15000);
+            if (!res.writableEnded) {
+                res.write(this._getKeepAliveChunk(req));
+            }
+        }, 3000);
 
         try {
             let lastMessage,
@@ -1816,7 +1818,7 @@ class RequestHandler {
                 object: "chat.completion.chunk",
                 created: Math.floor(Date.now() / 1000),
                 model: "gpt-4",
-                choices: [{ index: 0, delta: {}, finish_reason: null }],
+                choices: [{ index: 0, delta: { content: "" }, finish_reason: null }],
             };
             return `data: ${JSON.stringify(payload)}\n\n`;
         }
@@ -1849,7 +1851,7 @@ class RequestHandler {
     _handleRequestError(error, res) {
         if (res.headersSent) {
             this.logger.error(`[Request] 请求处理错误 (头已发送): ${error.message}`);
-            if (this.serverSystem.streamingMode === "fake")
+            if (this.serverSystem.streamingMode === "fakeflow")
                 this._sendErrorChunkToClient(res, `处理失败: ${error.message}`);
             if (!res.writableEnded) res.end();
         } else {
@@ -2098,6 +2100,10 @@ class ProxyServerSystem extends EventEmitter {
         try {
             if (fs.existsSync(configPath)) {
                 const fileConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+                if (fileConfig.streamingMode === 'fake') {
+                    fileConfig.streamingMode = 'fakeflow';
+                    this.logger.info("[System] 配置中的 'fake' 流模式已自动转换为 'fakeflow'。");
+                }
                 config = { ...config, ...fileConfig };
                 this.logger.info("[System] 已从 config.json 加载配置。");
             }
@@ -2108,8 +2114,14 @@ class ProxyServerSystem extends EventEmitter {
         if (process.env.PORT)
             config.httpPort = parseInt(process.env.PORT, 10) || config.httpPort;
         if (process.env.HOST) config.host = process.env.HOST;
-        if (process.env.STREAMING_MODE)
-            config.streamingMode = process.env.STREAMING_MODE;
+        if (process.env.STREAMING_MODE) {
+            if (process.env.STREAMING_MODE === 'fake') {
+                config.streamingMode = 'fakeflow';
+                this.logger.info("[System] 环境变量中的 'fake' 流模式已自动转换为 'fakeflow'。");
+            } else {
+                config.streamingMode = process.env.STREAMING_MODE;
+            }
+        }
         if (process.env.FAILURE_THRESHOLD)
             config.failureThreshold =
                 parseInt(process.env.FAILURE_THRESHOLD, 10) || config.failureThreshold;
@@ -2569,19 +2581,6 @@ class ProxyServerSystem extends EventEmitter {
                     .send(`致命错误：操作失败！请检查日志。错误: ${error.message}`);
             }
         });
-        app.post("/api/set-mode", isAuthenticated, (req, res) => {
-            const newMode = req.body.mode;
-            if (newMode === "fake" || newMode === "real") {
-                this.streamingMode = newMode;
-                this.logger.info(
-                    `[WebUI] 流式模式已由认证用户切换为: ${this.streamingMode}`
-                );
-                res.status(200).send(`流式模式已切换为: ${this.streamingMode}`);
-            } else {
-                res.status(400).send('无效模式. 请用 "fake" 或 "real".');
-            }
-        });
-
         // Quick Switch Account API
         app.post("/api/quick-switch", isAuthenticated, async (req, res) => {
             try {
@@ -2616,35 +2615,6 @@ class ProxyServerSystem extends EventEmitter {
             }
         });
 
-        // Toggle Stream Mode API
-        app.post("/api/toggle-stream-mode", isAuthenticated, (req, res) => {
-            try {
-                const { mode } = req.body;
-
-                if (!mode || (mode !== "fake" && mode !== "real")) {
-                    return res.status(400).send('无效模式. 请使用 "fake" 或 "real".');
-                }
-
-                const oldMode = this.streamingMode;
-                this.streamingMode = mode;
-
-                this.logger.info(
-                    `[WebUI] 流式模式已由 ${oldMode} 切换为: ${this.streamingMode}`
-                );
-
-                res.status(200).json({
-                    success: true,
-                    oldMode: oldMode,
-                    newMode: this.streamingMode,
-                    message: `流式模式已从 ${oldMode} 切换为 ${this.streamingMode}`
-                });
-            } catch (error) {
-                this.logger.error(
-                    `[WebUI] 切换流模式时发生错误: ${error.message}`
-                );
-                res.status(500).send(`切换流模式失败: ${error.message}`);
-            }
-        });
         app.use(this._createAuthMiddleware());
 
         app.get("/v1/models", (req, res) => {
@@ -2661,7 +2631,7 @@ class ProxyServerSystem extends EventEmitter {
                 });
                 // Add fake model
                 acc.push({
-                    id: `fake-${id}`,
+                    id: `Fakeflow/${id}`,
                     object: "model",
                     created: created,
                     owned_by: "google",
@@ -2699,6 +2669,98 @@ class ProxyServerSystem extends EventEmitter {
 
     _setupAuthManagementRoutes(router) {
         const authDir = path.join(__dirname, "auth");
+        const multer = require("multer");
+        const AdmZip = require("adm-zip");
+        const upload = multer({ storage: multer.memoryStorage() });
+
+        // POST /api/auth/upload-zip - 上传并处理ZIP文件
+        router.post("/upload-zip", upload.single('zipfile'), (req, res) => {
+            if (!req.file) {
+                return res.status(400).json({ message: "未检测到上传的文件。" });
+            }
+
+            try {
+                this.logger.info(`[API] 收到ZIP文件: ${req.file.originalname}, 大小: ${req.file.size} bytes`);
+                const zip = new AdmZip(req.file.buffer);
+                const zipEntries = zip.getEntries();
+                const jsonFiles = zipEntries.filter(entry => entry.entryName.toLowerCase().endsWith('.json') && !entry.isDirectory);
+
+                if (jsonFiles.length === 0) {
+                    return res.status(400).json({ message: "ZIP文件中未找到任何.json文件。" });
+                }
+
+                this.logger.info(`[API] 在ZIP中发现 ${jsonFiles.length} 个JSON文件。`);
+
+                // 确保auth目录存在
+                if (!fs.existsSync(authDir)) {
+                    fs.mkdirSync(authDir, { recursive: true });
+                }
+
+                let currentMaxIndex = this.authSource.initialIndices.length > 0 ? Math.max(...this.authSource.initialIndices) : 0;
+                let addedCount = 0;
+
+                jsonFiles.forEach(jsonEntry => {
+                    try {
+                        const newIndex = ++currentMaxIndex;
+                        const newFileName = `auth-${newIndex}.json`;
+                        const newFilePath = path.join(authDir, newFileName);
+                        const fileContent = jsonEntry.getData(); // Get content as a Buffer
+
+                        // 验证JSON格式
+                        JSON.parse(fileContent.toString('utf8'));
+
+                        fs.writeFileSync(newFilePath, fileContent);
+                        this.logger.info(`[API] 已保存新的配置文件: ${newFileName}`);
+                        addedCount++;
+                    } catch (e) {
+                        this.logger.error(`[API] 处理ZIP中的文件 ${jsonEntry.entryName} 失败: ${e.message}`);
+                        // 如果一个文件失败，回滚currentMaxIndex，但继续尝试下一个
+                        currentMaxIndex--;
+                    }
+                });
+
+                this.authSource.rescanSources();
+                res.status(200).json({ success: true, message: `成功添加 ${addedCount} 个新的配置文件。` });
+
+            } catch (error) {
+                this.logger.error(`[API] 处理ZIP文件失败: ${error.message}`);
+                res.status(500).json({ message: "处理ZIP文件时发生服务器内部错误。" });
+            }
+        });
+
+        // GET /api/auth/download-all - 下载所有配置
+        router.get("/download-all", (req, res) => {
+            try {
+                const files = fs.readdirSync(authDir).filter(file => /^auth-\d+\.json$/.test(file));
+                if (files.length === 0) {
+                    return res.status(404).json({ message: "没有找到任何auth配置文件。" });
+                }
+
+                const zip = new AdmZip();
+                files.forEach(file => {
+                    const filePath = path.join(authDir, file);
+                    zip.addLocalFile(filePath);
+                });
+
+                const zipBuffer = zip.toBuffer();
+                const date = new Date().toISOString().slice(0, 10);
+                const fileName = `auth_backup_${date}.zip`;
+
+                res.set({
+                    'Content-Type': 'application/zip',
+                    'Content-Disposition': `attachment; filename="${fileName}"`,
+                    'Content-Length': zipBuffer.length
+                });
+
+                res.send(zipBuffer);
+                this.logger.info(`[API] 已成功生成并发送了包含 ${files.length} 个配置的ZIP包。`);
+
+            } catch (error) {
+                this.logger.error(`[API] 生成ZIP包失败: ${error.message}`);
+                res.status(500).json({ message: "生成ZIP包时发生服务器内部错误。" });
+            }
+        });
+
 
         // GET /api/auth/configs - 获取所有配置
         // GET /api/auth/configs - 获取所有配置 (增强版)

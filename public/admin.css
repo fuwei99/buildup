@@ -348,10 +348,6 @@ body {
     background: linear-gradient(135deg, #30cfd0, #330867);
 }
 
-.stream-icon {
-    background: linear-gradient(135deg, #a8edea, #fed6e3);
-}
-
 .system-icon {
     background: linear-gradient(135deg, #ffecd2, #fcb69f);
 }
@@ -447,25 +443,6 @@ body {
     outline: none;
     border-color: var(--accent-primary);
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
-}
-
-.mode-toggle-group {
-    display: flex;
-    gap: var(--spacing-2);
-}
-
-.mode-btn {
-    flex: 1;
-    padding: var(--spacing-3);
-    font-size: var(--font-size-sm);
-    border-radius: var(--radius-md);
-    transition: all var(--transition-fast);
-}
-
-.mode-btn.active {
-    background-color: var(--accent-primary);
-    color: white;
-    border-color: var(--accent-primary);
 }
 
 .refresh-status {
@@ -1070,10 +1047,6 @@ body {
     .quick-actions-grid {
         grid-template-columns: 1fr;
         gap: var(--spacing-4);
-    }
-
-    .mode-toggle-group {
-        flex-direction: column;
     }
 
     .toolbar-section {

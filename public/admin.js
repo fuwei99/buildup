@@ -17,16 +17,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const failureProgressEl = document.getElementById('failure-progress');
     const browserStatusEl = document.getElementById('browser-status');
     const browserStatusDescEl = document.getElementById('browser-status-desc');
-    const streamModeEl = document.getElementById('stream-mode');
-    const streamModeDescEl = document.getElementById('stream-mode-desc');
     const systemHealthEl = document.getElementById('system-health');
     const systemHealthDescEl = document.getElementById('system-health-desc');
 
     // Quick Actions Elements
     const quickAccountSelect = document.getElementById('quick-account-select');
     const quickSwitchBtn = document.getElementById('quick-switch-btn');
-    const setRealModeBtn = document.getElementById('set-real-mode');
-    const setFakeModeBtn = document.getElementById('set-fake-mode');
     const toggleRefreshBtn = document.getElementById('toggle-refresh-btn');
     const refreshIndicatorEl = document.getElementById('refresh-indicator');
     const refreshTextEl = document.getElementById('refresh-text');
@@ -48,6 +44,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const viewLogsBtn = document.getElementById('view-logs-btn');
     const refreshDataBtn = document.getElementById('refresh-data-btn');
     const refreshLogsBtn = document.getElementById('refresh-logs-button');
+   const uploadZipBtn = document.getElementById('upload-zip-btn');
+   const zipUploadInput = document.getElementById('zip-upload-input');
+   const downloadAllBtn = document.getElementById('download-all-btn');
 
     // Modal Close Buttons
     const modalClose = document.getElementById('modal-close');
@@ -226,11 +225,6 @@ document.addEventListener('DOMContentLoaded', () => {
             browserStatusEl.style.color = browserConnected ? 'var(--success)' : 'var(--danger)';
             browserStatusDescEl.textContent = browserConnected ? '浏览器正常运行' : '浏览器连接异常';
 
-            // 更新流模式状态
-            const streamMode = currentStatusData.streamingMode;
-            streamModeEl.textContent = streamMode.includes('real') ? 'Real 模式' : 'Fake 模式';
-            streamModeDescEl.textContent = streamMode;
-
             // 更新系统健康状态
             systemHealthEl.textContent = '运行中';
             systemHealthEl.style.color = 'var(--success)';
@@ -316,33 +310,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('快速切换账号失败:', error);
             showToast(`快速切换账号失败: ${error.message}`, 'error');
-        }
-    };
-
-    const setStreamMode = async (mode) => {
-        try {
-            const response = await fetch('/api/set-mode', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mode })
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(errorText);
-            }
-
-            const result = await response.text();
-            showToast(result, 'success');
-            await updateStatusDisplay();
-
-            // 更新按钮状态
-            setRealModeBtn.classList.toggle('active', mode === 'real');
-            setFakeModeBtn.classList.toggle('active', mode === 'fake');
-
-        } catch (error) {
-            console.error('设置流模式失败:', error);
-            showToast(`设置流模式失败: ${error.message}`, 'error');
         }
     };
 
@@ -539,9 +506,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Quick Actions Event Listeners
     quickSwitchBtn.addEventListener('click', quickSwitchAccount);
 
-    setRealModeBtn.addEventListener('click', () => setStreamMode('real'));
-    setFakeModeBtn.addEventListener('click', () => setStreamMode('fake'));
-
     toggleRefreshBtn.addEventListener('click', toggleAutoRefresh);
 
     // New Config Button
@@ -572,6 +536,79 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Refresh Logs Button
     refreshLogsBtn.addEventListener('click', fetchLogs);
+
+   // Download All Button
+   downloadAllBtn.addEventListener('click', async () => {
+       showToast('正在准备下载...', 'info');
+       try {
+           const response = await fetch('/api/auth/download-all');
+           if (!response.ok) {
+               const errorData = await response.json();
+               throw new Error(errorData.message || '下载失败');
+           }
+           const blob = await response.blob();
+           const url = window.URL.createObjectURL(blob);
+           const a = document.createElement('a');
+           a.style.display = 'none';
+           a.href = url;
+           // 从Content-Disposition头获取文件名，或提供一个默认名
+           const disposition = response.headers.get('Content-Disposition');
+           let filename = 'auth_configs.zip';
+           if (disposition && disposition.indexOf('attachment') !== -1) {
+               const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+               const matches = filenameRegex.exec(disposition);
+               if (matches != null && matches[1]) {
+                   filename = matches[1].replace(/['"]/g, '');
+               }
+           }
+           a.download = filename;
+           document.body.appendChild(a);
+           a.click();
+           window.URL.revokeObjectURL(url);
+           a.remove();
+           showToast('下载成功！', 'success');
+       } catch (error) {
+           showToast(`下载失败: ${error.message}`, 'error');
+       }
+   });
+
+   // Upload Zip Button
+   uploadZipBtn.addEventListener('click', () => {
+       zipUploadInput.click();
+   });
+
+   zipUploadInput.addEventListener('change', async (e) => {
+       const file = e.target.files[0];
+       if (!file) return;
+
+       const formData = new FormData();
+       formData.append('zipfile', file);
+
+       showToast('正在上传并处理ZIP文件...', 'info');
+
+       try {
+           const response = await fetch('/api/auth/upload-zip', {
+               method: 'POST',
+               body: formData,
+           });
+
+           const result = await response.json();
+
+           if (!response.ok) {
+               throw new Error(result.message || '上传失败');
+           }
+
+           showToast(result.message, 'success');
+           await renderConfigs();
+           await updateAccountOptions();
+
+       } catch (error) {
+           showToast(`上传失败: ${error.message}`, 'error');
+       } finally {
+           // Reset the input so the same file can be uploaded again
+           e.target.value = '';
+       }
+   });
 
     // Search Input
     searchInput.addEventListener('input', (e) => {
@@ -802,13 +839,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 初始化自动刷新
             startAutoRefresh();
-
-            // 初始化流模式按钮状态
-            if (currentStatusData) {
-                const currentMode = currentStatusData.streamingMode.includes('real') ? 'real' : 'fake';
-                setRealModeBtn.classList.toggle('active', currentMode === 'real');
-                setFakeModeBtn.classList.toggle('active', currentMode === 'fake');
-            }
 
             // 加载配置列表
             await renderConfigs();

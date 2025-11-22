@@ -188,7 +188,7 @@ class RequestProcessor {
       : requestSpec.path;
     const queryParams = new URLSearchParams(requestSpec.query_params);
     if (requestSpec.streaming_mode === "fake") {
-      Logger.output("假流式模式激活，正在修改请求...");
+      Logger.output("Fakeflow模式激活，正在修改请求...");
       if (pathSegment.includes(":streamGenerateContent")) {
         pathSegment = pathSegment.replace(
           ":streamGenerateContent",
@@ -363,7 +363,7 @@ class ProxySystem extends EventTarget {
   // [最终武器 - Canvas抽魂] 替换整个 _processProxyRequest 函数
   async _processProxyRequest(requestSpec) {
     const operationId = requestSpec.request_id;
-    const mode = requestSpec.streaming_mode || "fake";
+    const mode = requestSpec.streaming_mode || "fakeflow";
     Logger.output(`浏览器收到请求`);
 
     try {
@@ -395,7 +395,7 @@ class ProxySystem extends EventTarget {
           // 流式模式：立即转发每个数据块
           this._transmitChunk(chunk, operationId);
         } else {
-          // fake mode
+          // fakeflow mode
           // 非流式模式：拼接数据块，等待最后一次性转发
           fullBody += chunk;
         }
@@ -403,7 +403,7 @@ class ProxySystem extends EventTarget {
 
       Logger.output("数据流已读取完成。");
 
-      if (mode === "fake") {
+      if (mode === "fakeflow") {
         // 非流式模式下，在循环结束后，转发拼接好的完整响应体
         this._transmitChunk(fullBody, operationId);
       }
