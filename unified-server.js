@@ -1286,45 +1286,31 @@ class RequestHandler {
                 if (isFakeMode) {
                     this.logger.info("[Adapter] 进入OpenAI伪流式响应处理...");
 
-                    // [修复] 使用事件驱动的心跳机制
-                    let keepAliveActive = true;
-                    const keepAliveSender = async () => {
-                        while (keepAliveActive) {
-                            await new Promise(resolve => setTimeout(resolve, 10000));
-                            if (!keepAliveActive || res.writableEnded) break;
-                            messageQueue.enqueue({ type: 'KEEPALIVE' });
+                    // [新增] 启动异步心跳保活循环，独立于主线程运行
+                    const keepAliveLoop = async () => {
+                        while (!res.writableEnded) {
+                            await new Promise((resolve) => setTimeout(resolve, 3000));
+                            if (!res.writableEnded) {
+                                res.write(this._getKeepAliveChunk(req));
+                            }
                         }
                     };
-                    keepAliveSender();
+                    keepAliveLoop(); // 不 await，让其在后台独立运行
 
                     let fullBody = "";
-                    try {
-                        while (true) {
-                            const message = await messageQueue.dequeue(300000);
-
-                            if (message.type === 'KEEPALIVE') {
-                                if (!res.writableEnded) {
-                                    res.write(this._getKeepAliveChunk(req, requestId, model));
-                                }
-                                continue;
-                            }
-
-                            if (message.type === "STREAM_END") break;
-
-                            if (message.event_type === "chunk" && message.data) {
-                                fullBody += message.data;
-                            }
+                    while (true) {
+                        const message = await messageQueue.dequeue(300000);
+                        if (message.type === "STREAM_END") break;
+                        if (message.event_type === "chunk" && message.data) {
+                            fullBody += message.data;
                         }
-                    } finally {
-                        keepAliveActive = false;
                     }
 
                     // 将完整的Google响应体转换为单个OpenAI流块
                     // 我们需要给它加上 "data: " 前缀，因为翻译函数期望的是原始SSE块
                     const translatedChunk = this._translateGoogleToOpenAIStream(
                         `data: ${fullBody}`,
-                        model,
-                        requestId
+                        model
                     );
 
                     if (translatedChunk) {
@@ -1353,8 +1339,7 @@ class RequestHandler {
                         if (message.data) {
                             const translatedChunk = this._translateGoogleToOpenAIStream(
                                 message.data,
-                                model,
-                                requestId
+                                model
                             );
                             if (translatedChunk) {
                                 res.write(translatedChunk);
@@ -1527,83 +1512,132 @@ class RequestHandler {
             "Cache-Control": "no-cache",
             Connection: "keep-alive",
         });
-
-        // [修复] 使用事件驱动的心跳机制
-        let keepAliveActive = true;
-        const keepAliveSender = async () => {
-            while (keepAliveActive) {
-                await new Promise(resolve => setTimeout(resolve, 10000));
-                if (!keepAliveActive || res.writableEnded) break;
-                messageQueue.enqueue({ type: 'KEEPALIVE' });
+        const connectionMaintainer = setInterval(() => {
+            if (!res.writableEnded) {
+                res.write(this._getKeepAliveChunk(req));
             }
-        };
-        keepAliveSender();
+        }, 3000);
 
         try {
-            this._forwardRequest(proxyRequest);
+            let lastMessage,
+                requestFailed = false;
 
-            let fullBody = "";
-            let errorOccurred = null;
-
-            // 单一循环处理所有来自浏览器的消息
-            while (true) {
-                const message = await messageQueue.dequeue(300000); // 5分钟超时
-
-                if (message.type === 'KEEPALIVE') {
-                    if (!res.writableEnded) {
-                        res.write(this._getKeepAliveChunk(req, proxyRequest.request_id));
-                    }
-                    continue;
+            // 我们的重试循环（即使只跑一次）
+            for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+                if (attempt > 1) {
+                    this.logger.info(
+                        `[Request] 请求尝试 #${attempt}/${this.maxRetries}...`
+                    );
                 }
-
-                if (message.event_type === 'error') {
-                    errorOccurred = message;
-                    // 不要立即中断，等待STREAM_END以确保队列干净
-                }
-
-                if (message.event_type === 'chunk' && message.data) {
-                    fullBody += message.data;
-                }
-
-                if (message.type === 'STREAM_END') {
-                    break; // 浏览器通信结束
-                }
-            }
-
-            // 循环结束后处理结果
-            if (errorOccurred) {
-                this.logger.error(`[Request] 伪流式请求失败: ${errorOccurred.message}`);
-                await this._handleRequestFailureAndSwitch(errorOccurred, res);
-                this._sendErrorChunkToClient(res, `请求最终失败: ${errorOccurred.message}`);
-            } else {
-                // 成功逻辑
-                if (proxyRequest.is_generative) {
-                    this.authSource.incrementUsage(this.currentAuthIndex);
-                    if (this.failureCount > 0) {
-                        this.logger.info(`✅ [Auth] 生成请求成功 - 失败计数已从 ${this.failureCount} 重置为 0`);
-                        this.failureCount = 0;
-                    }
-                }
-                if (fullBody) {
-                    res.write(`data: ${fullBody}\n\n`);
-                }
+                this._forwardRequest(proxyRequest);
                 try {
-                    const fullResponse = JSON.parse(fullBody);
-                    const finishReason = fullResponse.candidates?.[0]?.finishReason || "UNKNOWN";
-                    this.logger.info(`✅ [Request] 响应结束，原因: ${finishReason}，请求ID: ${proxyRequest.request_id}`);
-                } catch (e) { /* 忽略解析错误 */ }
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(
+                            () =>
+                                reject(
+                                    new Error("Response from browser timed out after 300 seconds")
+                                ),
+                            300000
+                        )
+                    );
+                    lastMessage = await Promise.race([
+                        messageQueue.dequeue(),
+                        timeoutPromise,
+                    ]);
+                } catch (timeoutError) {
+                    this.logger.error(`[Request] 致命错误: ${timeoutError.message}`);
+                    lastMessage = {
+                        event_type: "error",
+                        status: 504,
+                        message: timeoutError.message,
+                    };
+                }
+
+                if (lastMessage.event_type === "error") {
+                    // --- 核心修改：在这里就区分，避免打印不必要的“失败”日志 ---
+                    if (
+                        !(
+                            lastMessage.message &&
+                            lastMessage.message.includes("The user aborted a request")
+                        )
+                    ) {
+                        // 只有在不是“用户取消”的情况下，才打印“尝试失败”的警告
+                        this.logger.warn(
+                            `[Request] 尝试 #${attempt} 失败: 收到 ${lastMessage.status || "未知"
+                            } 错误。 - ${lastMessage.message}`
+                        );
+                    }
+
+                    if (attempt < this.maxRetries) {
+                        await new Promise((resolve) =>
+                            setTimeout(resolve, this.retryDelay)
+                        );
+                        continue;
+                    }
+                    requestFailed = true;
+                }
+                break;
             }
 
-            res.write("data: [DONE]\n\n");
+            // 处理最终结果
+            if (requestFailed) {
+                if (
+                    lastMessage.message &&
+                    lastMessage.message.includes("The user aborted a request")
+                ) {
+                    this.logger.info(
+                        `[Request] 请求 #${proxyRequest.request_id} 已由用户妥善取消，不计入失败统计。`
+                    );
+                } else {
+                    this.logger.error(
+                        `[Request] 所有 ${this.maxRetries} 次重试均失败，将计入失败统计。`
+                    );
+                    await this._handleRequestFailureAndSwitch(lastMessage, res);
+                    this._sendErrorChunkToClient(
+                        res,
+                        `请求最终失败: ${lastMessage.message}`
+                    );
+                }
+                return;
+            }
 
+            // 成功的逻辑
+            if (proxyRequest.is_generative) {
+                this.authSource.incrementUsage(this.currentAuthIndex);
+            }
+            if (proxyRequest.is_generative && this.failureCount > 0) {
+                this.logger.info(
+                    `✅ [Auth] 生成请求成功 - 失败计数已从 ${this.failureCount} 重置为 0`
+                );
+                this.failureCount = 0;
+            }
+            const dataMessage = await messageQueue.dequeue();
+            const endMessage = await messageQueue.dequeue();
+            if (dataMessage.data) {
+                res.write(`data: ${dataMessage.data}\n\n`);
+            }
+            if (endMessage.type !== "STREAM_END") {
+                this.logger.warn("[Request] 未收到预期的流结束信号。");
+            }
+            try {
+                const fullResponse = JSON.parse(dataMessage.data);
+                const finishReason =
+                    fullResponse.candidates?.[0]?.finishReason || "UNKNOWN";
+                this.logger.info(
+                    `✅ [Request] 响应结束，原因: ${finishReason}，请求ID: ${proxyRequest.request_id}`
+                );
+            } catch (e) { }
+            res.write("data: [DONE]\n\n");
         } catch (error) {
             this._handleRequestError(error, res);
         } finally {
-            keepAliveActive = false;
+            clearInterval(connectionMaintainer);
             if (!res.writableEnded) {
                 res.end();
             }
-            this.logger.info(`[Request] 响应处理结束，请求ID: ${proxyRequest.request_id}`);
+            this.logger.info(
+                `[Request] 响应处理结束，请求ID: ${proxyRequest.request_id}`
+            );
         }
     }
 
@@ -1796,20 +1830,14 @@ class RequestHandler {
         }
     }
 
-    _getKeepAliveChunk(req, requestId = null, model = "gpt-4") {
+    _getKeepAliveChunk(req) {
         if (req.path.includes("chat/completions")) {
-            // [优化] 保持 ID 一致性，使用请求的 Model，并对齐假流格式 (增加 role)
-            const id = requestId ? `chatcmpl-${requestId}` : `chatcmpl-${this._generateRequestId()}`;
             const payload = {
-                id: id,
+                id: `chatcmpl-${this._generateRequestId()}`,
                 object: "chat.completion.chunk",
                 created: Math.floor(Date.now() / 1000),
-                model: model,
-                choices: [{
-                    index: 0,
-                    delta: { role: "assistant", content: "" },
-                    finish_reason: null
-                }],
+                model: "gpt-4",
+                choices: [{ index: 0, delta: { content: "" }, finish_reason: null }],
             };
             return `data: ${JSON.stringify(payload)}\n\n`;
         }
@@ -1823,6 +1851,7 @@ class RequestHandler {
                         content: { parts: [{ text: "" }], role: "model" },
                         finishReason: null,
                         index: 0,
+                        safetyRatings: [],
                     },
                 ],
             };
@@ -1958,7 +1987,7 @@ class RequestHandler {
         return googleRequest;
     }
 
-    _translateGoogleToOpenAIStream(googleChunk, modelName = "gemini-pro", requestId = null) {
+    _translateGoogleToOpenAIStream(googleChunk, modelName = "gemini-pro") {
         if (!googleChunk || googleChunk.trim() === "") {
             return null;
         }
@@ -1987,9 +2016,8 @@ class RequestHandler {
                     )}`
                 );
                 const errorText = `[ProxySystem Error] Request blocked due to safety settings. Finish Reason: ${googleResponse.promptFeedback.blockReason}`;
-                const id = requestId ? `chatcmpl-${requestId}` : `chatcmpl-${this._generateRequestId()}`;
                 return `data: ${JSON.stringify({
-                    id: id,
+                    id: `chatcmpl-${this._generateRequestId()}`,
                     object: "chat.completion.chunk",
                     created: Math.floor(Date.now() / 1000),
                     model: modelName,
@@ -2023,9 +2051,8 @@ class RequestHandler {
 
         const finishReason = candidate.finishReason;
 
-        const id = requestId ? `chatcmpl-${requestId}` : `chatcmpl-${this._generateRequestId()}`;
         const openaiResponse = {
-            id: id,
+            id: `chatcmpl-${this._generateRequestId()}`,
             object: "chat.completion.chunk",
             created: Math.floor(Date.now() / 1000),
             model: modelName,
